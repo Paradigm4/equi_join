@@ -24,11 +24,13 @@
 */
 
 #include "query/Operator.h"
+#include "RJoinSettings.h"
 
 namespace scidb
 {
 
 using namespace std;
+using namespace rjoin;
 
 class LogicalRJoin : public LogicalOperator
 {
@@ -36,13 +38,30 @@ public:
     LogicalRJoin(const string& logicalName, const string& alias):
         LogicalOperator(logicalName, alias)
     {
-        ADD_PARAM_INPUT()
+        ADD_PARAM_INPUT();
+        ADD_PARAM_INPUT();
+        ADD_PARAM_VARIES();
     }
 
+    std::vector<shared_ptr<OperatorParamPlaceholder> > nextVaryParamPlaceholder(const std::vector< ArrayDesc> &schemas)
+    {
+        std::vector<shared_ptr<OperatorParamPlaceholder> > res;
+        res.push_back(END_OF_VARIES_PARAMS());
+        if (_parameters.size() < Settings::MAX_PARAMETERS)
+        {
+            res.push_back(PARAM_INPUT());
+            res.push_back(PARAM_CONSTANT("string"));
+        }
+        return res;
+    }
 
     ArrayDesc inferSchema(vector< ArrayDesc> schemas, shared_ptr< Query> query)
     {
-        return schemas[0];
+        vector<ArrayDesc const*> inputSchemas;
+        inputSchemas.push_back(&(schemas[0]));
+        inputSchemas.push_back(&(schemas[1]));
+        Settings settings(inputSchemas, _parameters, true, query);
+        return settings.getOutputSchema(query);
     }
 };
 

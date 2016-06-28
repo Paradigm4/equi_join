@@ -57,7 +57,7 @@ all: librjoin.so
 clean:
 	rm -rf *.so *.o
 
-librjoin.so: $(SRCS) 
+librjoin.so: $(SRCS) RJoinSettings.h JoinHashTable.h 
 	@if test ! -d "$(SCIDB)"; then echo  "Error. Try:\n\nmake SCIDB=<PATH TO SCIDB INSTALL PATH>"; exit 1; fi
 	$(CXX) $(CCFLAGS) $(INC) -o LogicalRJoin.o -c LogicalRJoin.cpp
 	$(CXX) $(CCFLAGS) $(INC) -o PhysicalRJoin.o -c PhysicalRJoin.cpp
