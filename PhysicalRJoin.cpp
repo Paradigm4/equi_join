@@ -105,6 +105,37 @@ public:
         ++_outputPosition[1];
     }
 
+    void writeTuple(Value const* left, vector<Value const*> const& right)
+    {
+        if( _outputPosition[1] % _chunkSize == 0)
+        {
+            for(size_t i=0; i<_numAttributes; ++i)
+            {
+                if(_chunkIterators[i].get())
+                {
+                    _chunkIterators[i]->flush();
+                }
+                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, i == 0 ?
+                                                                                ChunkIterator::SEQUENTIAL_WRITE :
+                                                                                ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
+            }
+        }
+        for(size_t i=0; i<_numAttributes; ++i)
+        {
+            _chunkIterators[i]->setPosition(_outputPosition);
+            if(i<_settings.getNumLeftAttrs())
+            {
+                _chunkIterators[i]->writeItem(left[i]);
+            }
+            else
+            {
+                _chunkIterators[i]->writeItem(*(right[i - _settings.getNumLeftAttrs() + _numKeys ]));
+            }
+        }
+        ++_outputPosition[1];
+    }
+
+
     shared_ptr<Array> finalize()
     {
         for(size_t i =0; i<_numAttributes; ++i)
@@ -148,15 +179,23 @@ public:
         return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
     }
 
-    void readRightIntoTable(shared_ptr<Array> & rightArray, JoinHashTable& table, Settings const& settings)
+    //For hash join purposes, the handedness refers to which array is copied into a hash table and redistributed
+    enum Handedness
     {
-        size_t const nAttrs = settings.getNumRightAttrs();
+        LEFT,
+        RIGHT
+    };
+
+    template <Handedness which>
+    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings)
+    {
+        size_t const nAttrs = (which == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
         vector<Value const*> tuple(nAttrs, NULL);
         vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs);
         vector<shared_ptr<ConstChunkIterator> > citers(nAttrs);
         for(size_t i=0; i<nAttrs; ++i)
         {
-            aiters[i] = rightArray->getConstIterator(i);
+            aiters[i] = array->getConstIterator(i);
         }
         while(!aiters[0]->end())
         {
@@ -169,7 +208,7 @@ public:
                 for(size_t i=0; i<nAttrs; ++i)
                 {
                     Value const& v = citers[i]->getItem();
-                    tuple[settings.mapRightToTable(i)] = &v;
+                    tuple[ (which == LEFT ? settings.mapLeftToOutput(i) : settings.mapRightToTable(i)) ] = &v;
                 }
                 table.insert(tuple);
                 for(size_t i=0; i<nAttrs; ++i)
@@ -184,47 +223,68 @@ public:
         }
     }
 
-    shared_ptr<Array> leftToRightTableJoin(shared_ptr<Array>& leftArray, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings)
+    template <Handedness which>
+    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings)
     {
-        size_t const nLeftAttrs = settings.getNumLeftAttrs();
-        vector<Value const*> tuple(nLeftAttrs, NULL);
-        vector<shared_ptr<ConstArrayIterator> > leftAiters(nLeftAttrs, NULL);
-        vector<shared_ptr<ConstChunkIterator> > leftCiters(nLeftAttrs, NULL);
+        //handedness LEFT means the LEFT array is in the table so this reads a bit in reverse
+        size_t const nArrayAttrs = (which == LEFT ?  settings.getNumRightAttrs() : settings.getNumLeftAttrs());
+        vector<Value const*> tuple(nArrayAttrs, NULL);
+        vector<shared_ptr<ConstArrayIterator> > aiters(nArrayAttrs, NULL);
+        vector<shared_ptr<ConstChunkIterator> > citers(nArrayAttrs, NULL);
         JoinHashTable::const_iterator iter = table.getIterator();
         MemArrayAppender result (settings, query);
-        for(size_t i=0; i<nLeftAttrs; ++i)
+        for(size_t i=0; i<nArrayAttrs; ++i)
         {
-            leftAiters[i] = leftArray->getConstIterator(i);
+            aiters[i] = array->getConstIterator(i);
         }
-        while(!leftAiters[0]->end())
+        while(!aiters[0]->end())
         {
-            for(size_t i=0; i<nLeftAttrs; ++i)
+            for(size_t i=0; i<nArrayAttrs; ++i)
             {
-                leftCiters[i] = leftAiters[i]->getChunk().getConstIterator();
+                citers[i] = aiters[i]->getChunk().getConstIterator();
             }
-            while(!leftCiters[0]->end())
+            while(!citers[0]->end())
             {
-                for(size_t i=0; i<nLeftAttrs; ++i)
+                for(size_t i=0; i<nArrayAttrs; ++i)
                 {
-                    Value const& v = leftCiters[i]->getItem();
-                    tuple [ settings.mapLeftToOutput(i) ] = &v;
+                    Value const& v = citers[i]->getItem();
+                    tuple [ (which == LEFT ? settings.mapRightToTable(i) : settings.mapLeftToOutput(i)) ] = &v;
                 }
-                if(iter.find(tuple))
+                iter.find(tuple);
+                while(!iter.end() && iter.atKeys(tuple))
                 {
-                    Value const* right = iter.getTuple();
-                    result.writeTuple(tuple, right);
+                    Value const* tablePiece = iter.getTuple();
+                    if(which == LEFT)
+                    {
+                        result.writeTuple(tablePiece, tuple);
+                    }
+                    else
+                    {
+                        result.writeTuple(tuple, tablePiece);
+                    }
+                    iter.next();
                 }
-                for(size_t i=0; i<nLeftAttrs; ++i)
+                for(size_t i=0; i<nArrayAttrs; ++i)
                 {
-                    ++(*leftCiters[i]);
+                    ++(*citers[i]);
                 }
             }
-            for(size_t i=0; i<nLeftAttrs; ++i)
+            for(size_t i=0; i<nArrayAttrs; ++i)
             {
-                ++(*leftAiters[i]);
+                ++(*aiters[i]);
             }
         }
         return result.finalize();
+    }
+
+    template <Handedness which>
+    shared_ptr<Array> replicationHashJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
+    {
+        ArenaPtr operatorArena = this->getArena();
+        ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
+        JoinHashTable table(settings, hashArena, which == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
+        readIntoTable<which> (which == LEFT ? inputArrays[0] : inputArrays[1], table, settings);
+        return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings);
     }
 
 
@@ -234,12 +294,7 @@ public:
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
         Settings settings(inputSchemas, _parameters, false, query);
-        ArenaPtr operatorArena = this->getArena();
-        ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
-        JoinHashTable jht(settings, hashArena, settings.getNumRightAttrs());
-        readRightIntoTable(inputArrays[1], jht, settings);
-        jht.logStuff();
-        return leftToRightTableJoin(inputArrays[0], jht, query, settings);
+        return replicationHashJoin<LEFT>(inputArrays, query, settings);
     }
 };
 

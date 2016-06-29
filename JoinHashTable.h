@@ -57,7 +57,7 @@ private:
     //-----------------------------------------------------------------------------
     // MurmurHash3 was written by Austin Appleby, and is placed in the public
     // domain. The author hereby disclaims copyright to this source code.
-    #define ROT32(x, y) ((x << y) | (x >> (32 - y))) // avoid effort
+#define ROT32(x, y) ((x << y) | (x >> (32 - y))) // avoid effort
     static uint32_t murmur3_32(const char *key, uint32_t len, uint32_t const seed = 0x5C1DB123)
     {
         static const uint32_t c1 = 0xcc9e2d51;
@@ -115,7 +115,7 @@ private:
         {}
     };
 
-    Settings&                                _settings;
+    Settings const&                          _settings;
     ArenaPtr                                 _arena;
     size_t const                             _numAttributes;
     size_t const                             _numKeys;
@@ -128,7 +128,7 @@ private:
     size_t                                   _numGroups;
 
 public:
-    JoinHashTable(Settings& settings, ArenaPtr const& arena, size_t numAttributes):
+    JoinHashTable(Settings const& settings, ArenaPtr const& arena, size_t numAttributes):
             _settings(settings),
             _arena(arena),
             _numAttributes(numAttributes),
@@ -142,7 +142,7 @@ public:
             _numGroups(0)
     {}
 
-private:
+public:
     uint32_t hashKeys(vector<Value const*> const& keys) const
     {
         size_t totalSize = 0;
@@ -164,7 +164,6 @@ private:
         return murmur3_32(&buf[0], totalSize);
     }
 
-public:
     bool keysLess(Value const* keys1, vector<Value const*> const& keys2) const
     {
         for(size_t i =0; i<_numKeys; ++i)
@@ -252,8 +251,7 @@ public:
             Value const* storedTuple = getTuple( (*entry)->idx);
             if(keysEqual(storedTuple, tuple))
             {
-                newGroup = 0;
-                break;
+                newGroup = 0; //let's insert equal data in the same order it came in (might come in handy later)
             }
             else if (!keysLess(storedTuple, tuple))
             {
@@ -269,10 +267,6 @@ public:
         *entry = newEntry;
     }
 
-    /**
-     * @param[out] hash computes the hash of group as a side-effect
-     * @return true if the table contains the group, false otherwise
-     */
     bool contains(std::vector<Value const*> const& keys, uint32_t& hash) const
     {
         hash = hashKeys(keys) % _numHashBuckets;
@@ -314,9 +308,6 @@ public:
         HashTableEntry const* _entry;
 
     public:
-        /**
-         * To get one, call AggregateHashTable::getIterator
-         */
         const_iterator(JoinHashTable const* table):
             _table(table),
             _mark(NULL)
@@ -324,31 +315,25 @@ public:
             restart();
         }
 
-        /**
-         * Set the iterator at the first hash in the table
-         */
         void restart()
         {
             _currHash = 0;
-            _entry = _table->_buckets[_currHash];
-            while(_currHash < _table->_numHashBuckets && _entry == NULL)
+            do
             {
-                ++_currHash;
                 _entry = _table->_buckets[_currHash];
-            }
+                if(_entry != NULL)
+                {
+                    break;
+                }
+                ++_currHash;
+            } while(_currHash < _table->_numHashBuckets);
         }
 
-        /**
-         * @return true if the iterator has no more items, false otherwise
-         */
         bool end() const
         {
             return _currHash >= _table->_numHashBuckets;
         }
 
-        /**
-         * advance the iterator
-         */
         void next()
         {
             if (end())
@@ -367,7 +352,6 @@ public:
             }
         }
 
-        //GETTERS
         uint32_t getCurrentHash() const
         {
             if (end())
@@ -404,6 +388,15 @@ public:
                 return false;
             }
             return true;
+        }
+
+        bool atKeys(vector<Value const*> const& keys)
+        {
+            if(end())
+            {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "access past end";
+            }
+            return _table->keysEqual(getTuple(), keys);
         }
 
         void mark()
