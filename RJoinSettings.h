@@ -95,6 +95,13 @@ static size_t chooseNumBuckets(size_t maxTableSize)
  */
 class Settings
 {
+public:
+    enum algorithm
+    {
+        LEFT_TO_RIGHT,
+        RIGHT_TO_LEFT         //TODO:add MERGE here
+    };
+
 private:
     ArrayDesc                     _leftSchema;
     ArrayDesc                     _rightSchema;
@@ -111,8 +118,8 @@ private:
     vector<size_t>                _rightMap;
     vector<bool>                  _keyNullable;
     vector<AttributeComparator>   _keyComparators;
+    algorithm                     _algorithm;
 
-private:
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
         if(logical)
@@ -185,6 +192,22 @@ private:
         }
     }
 
+    void setParamAlgorithm(string trimmedContent)
+    {
+        if(trimmedContent == "left_to_right")
+        {
+            _algorithm = LEFT_TO_RIGHT;
+        }
+        else if (trimmedContent == "right_to_left")
+        {
+            _algorithm = RIGHT_TO_LEFT;
+        }
+        else
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse algorithm";
+        }
+    }
+
     void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
     {
         string paramContent = parameterString.substr(header.size());
@@ -201,7 +224,7 @@ private:
     }
 
 public:
-    static size_t const MAX_PARAMETERS = 4;
+    static size_t const MAX_PARAMETERS = 5;
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
@@ -216,16 +239,19 @@ public:
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
         _leftMap(_numLeftAttrs, _numLeftAttrs),
-        _rightMap(_numRightAttrs, _numRightAttrs)
+        _rightMap(_numRightAttrs, _numRightAttrs),
+        _algorithm(RIGHT_TO_LEFT)
     {
         string const leftKeysHeader                = "left_keys=";
         string const rightKeysHeader               = "right_keys=";
         string const maxTableSizeHeader            = "max_table_size=";
         string const chunkSizeHeader               = "chunk_size=";
+        string const algorithmHeader               = "algorithm=";
         bool leftKeysSet      = false;
         bool rightKeysSet     = false;
         bool maxTableSizeSet  = false;
         bool chunkSizeSet     = false;
+        bool algorithmSet     = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -249,6 +275,10 @@ public:
             else if (starts_with(parameterString, chunkSizeHeader))
             {
                 setParam(parameterString, chunkSizeSet, chunkSizeHeader, &Settings::setParamChunkSize);
+            }
+            else if (starts_with(parameterString, algorithmHeader))
+            {
+                setParam(parameterString, algorithmSet, algorithmHeader, &Settings::setParamAlgorithm);
             }
             else
             {
@@ -448,6 +478,11 @@ public:
     vector <AttributeComparator> const& getKeyComparators() const
     {
         return _keyComparators;
+    }
+
+    algorithm getAlgorithm() const
+    {
+        return _algorithm;
     }
 };
 

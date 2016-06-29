@@ -280,10 +280,12 @@ public:
     template <Handedness which>
     shared_ptr<Array> replicationHashJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
+        shared_ptr<Array> redistributed = (which == LEFT ? inputArrays[0] : inputArrays[1]);
+        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psByCol), ArrayResPtr(), query);
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
-        readIntoTable<which> (which == LEFT ? inputArrays[0] : inputArrays[1], table, settings);
+        readIntoTable<which> (redistributed, table, settings);
         return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings);
     }
 
@@ -294,7 +296,14 @@ public:
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
         Settings settings(inputSchemas, _parameters, false, query);
-        return replicationHashJoin<LEFT>(inputArrays, query, settings);
+        if(settings.getAlgorithm() == Settings::LEFT_TO_RIGHT)
+        {
+            return replicationHashJoin<LEFT>(inputArrays, query, settings);
+        }
+        else
+        {
+            return replicationHashJoin<RIGHT>(inputArrays, query, settings);
+        }
     }
 };
 
