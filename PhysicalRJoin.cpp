@@ -98,7 +98,7 @@ public:
             }
             else
             {
-                Value const* v = right + _numKeys;
+                Value const* v = right + _numKeys + i - _leftTupleSize;
                 _chunkIterators[i]->writeItem(*v);
             }
         }
