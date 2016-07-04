@@ -106,18 +106,22 @@ private:
     ArrayDesc                     _leftSchema;
     ArrayDesc                     _rightSchema;
     size_t                        _numLeftAttrs;
+    size_t                        _numLeftDims;
     size_t                        _numRightAttrs;
+    size_t                        _numRightDims;
+    vector<ssize_t>               _leftMapToTuple;   //maps all attributes and dimensions from left to tuple, -1 if not used
+    vector<ssize_t>               _rightMapToTuple;
+    size_t                        _leftTupleSize;    //_numLeftDims + _numLeftAttrs
+    size_t                        _rightTupleSize;   //_numRightDims + _numRightAttrs
+    size_t                        _numKeys;
+    vector<AttributeComparator>   _keyComparators;   //one per key
+    vector<size_t>                _leftKeys;         //key indeces in the left array
+    vector<size_t>                _rightKeys;        //key indeces in the right array
+    vector<bool>                  _keyNullable;      //in the output
     size_t                        _maxTableSize;
     size_t                        _numHashBuckets;
     size_t                        _chunkSize;
     size_t                        _numInstances;
-    size_t                        _numKeys;
-    vector<ssize_t>               _leftKeys;
-    vector<ssize_t>               _rightKeys;
-    vector<size_t>                _leftMap;
-    vector<size_t>                _rightMap;
-    vector<bool>                  _keyNullable;
-    vector<AttributeComparator>   _keyComparators;
     algorithm                     _algorithm;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
@@ -129,7 +133,7 @@ private:
         return ((shared_ptr<OperatorParamPhysicalExpression>&) parameter)->getExpression()->evaluate().getString();
     }
 
-    void setParamKeys(string trimmedContent, vector<ssize_t> &keys)
+    void setParamKeys(string trimmedContent, vector<size_t> &keys)
     {
         stringstream ss(trimmedContent);
         string tok;
@@ -137,7 +141,7 @@ private:
         {
             try
             {
-                ssize_t key = lexical_cast<ssize_t>(tok);
+                int64_t key = lexical_cast<int64_t>(tok);
                 keys.push_back(key);
             }
             catch (bad_lexical_cast const& exn)
@@ -233,13 +237,13 @@ public:
         _leftSchema(*(inputSchemas[0])),
         _rightSchema(*(inputSchemas[1])),
         _numLeftAttrs(_leftSchema.getAttributes(true).size()),
+        _numLeftDims(_leftSchema.getDimensions().size()),
         _numRightAttrs(_rightSchema.getAttributes(true).size()),
+        _numRightDims(_rightSchema.getDimensions().size()),
         _maxTableSize(Config::getInstance()->getOption<int>(CONFIG_MERGE_SORT_BUFFER)),
         _numHashBuckets(chooseNumBuckets(_maxTableSize)),
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
-        _leftMap(_numLeftAttrs, _numLeftAttrs),
-        _rightMap(_numRightAttrs, _numRightAttrs),
         _algorithm(RIGHT_TO_LEFT)
     {
         string const leftKeysHeader                = "left_keys=";
@@ -308,44 +312,51 @@ private:
         throwIf(_leftKeys.size() != _rightKeys.size(),    "mismatched numbers of keys provided");
         for(size_t i =0; i<_leftKeys.size(); ++i)
         {
-            ssize_t leftKey  = _leftKeys[i];
-            ssize_t rightKey = _rightKeys[i];
-            throwIf(leftKey < 0 || rightKey < 0,                     "negative keys not supported");
-            throwIf(static_cast<size_t>(leftKey)  >= _numLeftAttrs,  "left key out of bounds");
-            throwIf(static_cast<size_t>(rightKey) >= _numRightAttrs, "right key out of bounds");
-            AttributeDesc const& leftAttr =  _leftSchema.getAttributes(true)[leftKey];
-            AttributeDesc const& rightAttr = _rightSchema.getAttributes(true)[rightKey];
-            throwIf(leftAttr.getType() != rightAttr.getType(), "key types do not match");
+            size_t leftKey  = _leftKeys[i];
+            size_t rightKey = _rightKeys[i];
+            throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left key out of bounds");
+            throwIf(rightKey >= _numRightAttrs + _numLeftDims, "right key out of bounds");
+            TypeId leftType   = leftKey   < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
+            TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true)[rightKey].getType() : TID_INT64;
+            throwIf(leftType != rightType, "key types do not match");
         }
     }
 
     void mapAttributes()
     {
         _numKeys = _leftKeys.size();
+        _leftMapToTuple.resize(_numLeftAttrs + _numLeftDims, -1);
+        _rightMapToTuple.resize(_numRightAttrs + _numRightDims, -1);
         for(size_t i =0; i<_numKeys; ++i)
         {
-            _leftMap[_leftKeys[i]]   = i;
-            _rightMap[_rightKeys[i]] = i;
-            AttributeDesc const& leftAttr =  _leftSchema.getAttributes(true)[_leftKeys[i]];
-            AttributeDesc const& rightAttr = _rightSchema.getAttributes(true)[_rightKeys[i]];
-            _keyComparators.push_back(AttributeComparator(leftAttr.getType()));
-            _keyNullable.push_back( leftAttr.isNullable() || rightAttr.isNullable());
+            size_t leftKey  = _leftKeys[i];
+            size_t rightKey = _rightKeys[i];
+            _leftMapToTuple[leftKey]   = i;
+            _rightMapToTuple[rightKey] = i;
+            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
+            bool leftNullable  = leftKey  < _numLeftAttrs  ?  _leftSchema.getAttributes(true)[leftKey].isNullable()   : false;
+            bool rightNullable = rightKey < _numRightAttrs  ? _rightSchema.getAttributes(true)[rightKey].isNullable() : false;
+            _keyComparators.push_back(AttributeComparator(leftType));
+            _keyNullable.push_back( leftNullable || rightNullable );
         }
         size_t j=_numKeys;
-        for(size_t i =0; i<_numLeftAttrs; ++i)
+        for(size_t i =0; i<_numLeftAttrs + _numLeftDims; ++i)
         {
-            if(_leftMap[i] == _numLeftAttrs)
+            if(_leftMapToTuple[i] == -1)
             {
-                _leftMap[i] = j++;
+                _leftMapToTuple[i] = j++;
             }
         }
-        for(size_t i =0; i<_numRightAttrs; ++i)
+        _leftTupleSize = j;
+        j = _numKeys;
+        for(size_t i =0; i<_numRightAttrs + _numRightDims; ++i)
         {
-            if(_rightMap[i] == _numRightAttrs)
+            if(_rightMapToTuple[i] == -1)
             {
-                _rightMap[i] = j++;
+                _rightMapToTuple[i] = j++;
             }
         }
+        _rightTupleSize = j;
     }
 
     void logSettings()
@@ -372,22 +383,42 @@ public:
         return _numLeftAttrs;
     }
 
+    size_t getNumLeftDims() const
+    {
+        return _numLeftDims;
+    }
+
     size_t getNumRightAttrs() const
     {
         return _numRightAttrs;
     }
 
-    size_t getNumOutputAttrs() const
+    size_t getNumRightDims() const
     {
-        return _numLeftAttrs + _numRightAttrs - _numKeys;
+        return _numRightDims;
     }
 
-    vector<ssize_t> const& getLeftKeys() const
+    size_t getNumOutputAttrs() const
+    {
+        return _leftTupleSize + _rightTupleSize - _numKeys;
+    }
+
+    size_t getLeftTupleSize() const
+    {
+        return _leftTupleSize;
+    }
+
+    size_t getRightTupleSize() const
+    {
+        return _rightTupleSize;
+    }
+
+    vector<size_t> const& getLeftKeys() const
     {
         return _leftKeys;
     }
 
-    vector<ssize_t> const& getRightKeys() const
+    vector<size_t> const& getRightKeys() const
     {
         return _rightKeys;
     }
@@ -412,36 +443,46 @@ public:
         return _rightSchema;
     }
 
-    bool isLeftKey(AttributeID const i) const
+    bool isLeftKey(size_t const i) const
     {
-        return _leftMap[i] < _numKeys;
-    }
-
-    bool isRightKey(AttributeID const i) const
-    {
-        return _rightMap[i] < _numKeys;
-    }
-
-    AttributeID mapLeftToOutput(AttributeID const leftAttr) const
-    {
-        return _leftMap[leftAttr];
-    }
-
-    AttributeID mapRightToOutput(AttributeID const rightAttr) const
-    {
-        return _rightMap[rightAttr];
-    }
-
-    AttributeID mapRightToTable(AttributeID const rightAttr) const
-    {
-        if(isRightKey(rightAttr))
+        if(_leftMapToTuple[i] < 0)
         {
-            return mapRightToOutput(rightAttr);
+            return false;
         }
-        else
+        return static_cast<size_t>(_leftMapToTuple[i]) < _numKeys;
+    }
+
+    bool isRightKey(size_t const i) const
+    {
+        if(_rightMapToTuple[i] < 0)
         {
-            return mapRightToOutput(rightAttr) - _numLeftAttrs + _numKeys;
+            return false;
         }
+        return static_cast<size_t>(_rightMapToTuple[i]) < _numKeys;
+    }
+
+    ssize_t mapLeftToTuple(size_t const leftField) const
+    {
+        return _leftMapToTuple[leftField];
+    }
+
+    ssize_t mapRightToTuple(size_t const rightField) const
+    {
+        return _rightMapToTuple[rightField];
+    }
+
+    ssize_t mapLeftToOutput(size_t const leftField) const
+    {
+        return _leftMapToTuple[leftField];
+    }
+
+    ssize_t mapRightToOutput(size_t const rightField) const
+    {
+        if(_rightMapToTuple[rightField] == -1)
+        {
+            return -1;
+        }
+        return  isRightKey(rightField) ? _rightMapToTuple[rightField] : _rightMapToTuple[rightField] + _leftTupleSize - _numKeys;
     }
 
     ArrayDesc getOutputSchema(shared_ptr< Query> query, string const name = "") const
@@ -454,9 +495,20 @@ public:
             uint16_t flags = input.getFlags();
             if(isLeftKey(i) && _keyNullable[destinationId] )
             {
-                flags = AttributeDesc::IS_NULLABLE;
+                flags |= AttributeDesc::IS_NULLABLE;
             }
             outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
+        }
+        for(size_t i =0; i<_numLeftDims; ++i)
+        {
+            DimensionDesc const& inputDim = _leftSchema.getDimensions()[i];
+            AttributeID destinationId = mapLeftToOutput(i + _numLeftAttrs);
+            uint16_t flags = 0;
+            if(isLeftKey(i + _numLeftAttrs) && _keyNullable[destinationId])
+            {
+                flags = AttributeDesc::IS_NULLABLE;
+            }
+            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, flags, 0);
         }
         for(AttributeID i =0; i<_numRightAttrs; ++i)
         {
@@ -467,6 +519,16 @@ public:
             AttributeDesc const& input = _rightSchema.getAttributes(true)[i];
             AttributeID destinationId = mapRightToOutput(i);
             outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), input.getFlags(), 0);
+        }
+        for(size_t i =0; i<_numRightDims; ++i)
+        {
+            DimensionDesc const& inputDim = _rightSchema.getDimensions()[i];
+            if(isRightKey(i + _numRightAttrs))
+            {
+                continue;
+            }
+            AttributeID destinationId = mapRightToOutput(i + _numRightAttrs);
+            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
         }
         outputAttributes = addEmptyTagAttribute(outputAttributes);
         Dimensions outputDimensions;
