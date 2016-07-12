@@ -312,7 +312,7 @@ public:
     shared_ptr<Array> replicationHashJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
         shared_ptr<Array> redistributed = (which == LEFT ? inputArrays[0] : inputArrays[1]);
-        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psByCol), ArrayResPtr(), query);
+        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query);
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
