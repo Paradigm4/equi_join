@@ -111,18 +111,20 @@ private:
     size_t                        _numRightDims;
     vector<ssize_t>               _leftMapToTuple;   //maps all attributes and dimensions from left to tuple, -1 if not used
     vector<ssize_t>               _rightMapToTuple;
-    size_t                        _leftTupleSize;    //_numLeftDims + _numLeftAttrs
-    size_t                        _rightTupleSize;   //_numRightDims + _numRightAttrs
+    size_t                        _leftTupleSize;
+    size_t                        _rightTupleSize;
     size_t                        _numKeys;
     vector<AttributeComparator>   _keyComparators;   //one per key
-    vector<size_t>                _leftKeys;         //key indeces in the left array
-    vector<size_t>                _rightKeys;        //key indeces in the right array
-    vector<bool>                  _keyNullable;      //in the output
+    vector<size_t>                _leftIds;          //key indeces in the left array:  attributes start at 0, dimensions start at numAttrs
+    vector<size_t>                _rightKeys;        //key indeces in the right array: attributes start at 0, dimensions start at numAttrs
+    vector<bool>                  _keyNullable;      //one per key, in the output
     size_t                        _maxTableSize;
     size_t                        _numHashBuckets;
     size_t                        _chunkSize;
     size_t                        _numInstances;
     algorithm                     _algorithm;
+    bool                          _algorithmSet;
+    bool                          _keepDimensions;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
@@ -133,7 +135,7 @@ private:
         return ((shared_ptr<OperatorParamPhysicalExpression>&) parameter)->getExpression()->evaluate().getString();
     }
 
-    void setParamKeys(string trimmedContent, vector<size_t> &keys)
+    void setParamKeys(string trimmedContent, vector<size_t> &keys, size_t shift)
     {
         stringstream ss(trimmedContent);
         string tok;
@@ -141,7 +143,15 @@ private:
         {
             try
             {
-                int64_t key = lexical_cast<int64_t>(tok);
+                uint64_t key;
+                if(tok[0] == '~')
+                {
+                    key = lexical_cast<uint64_t>(tok.substr(1)) + shift;
+                }
+                else
+                {
+                    key = lexical_cast<uint64_t>(tok);
+                }
                 keys.push_back(key);
             }
             catch (bad_lexical_cast const& exn)
@@ -153,12 +163,12 @@ private:
 
     void setParamLeftKeys(string trimmedContent)
     {
-        setParamKeys(trimmedContent, _leftKeys);
+        setParamKeys(trimmedContent, _leftIds, _numLeftAttrs);
     }
 
     void setParamRightKeys(string trimmedContent)
     {
-        setParamKeys(trimmedContent, _rightKeys);
+        setParamKeys(trimmedContent, _rightKeys, _numRightAttrs);
     }
 
     void setParamMaxTableSize(string trimmedContent)
@@ -212,6 +222,22 @@ private:
         }
     }
 
+    void setParamKeepDimensions(string trimmedContent)
+    {
+        if(trimmedContent == "1" || trimmedContent == "t" || trimmedContent == "T" || trimmedContent == "true" || trimmedContent == "TRUE")
+        {
+            _keepDimensions = true;
+        }
+        else if (trimmedContent == "0" || trimmedContent == "f" || trimmedContent == "F" || trimmedContent == "false" || trimmedContent == "FALSE")
+        {
+            _keepDimensions = false;
+        }
+        else
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse keep_dimensions";
+        }
+    }
+
     void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
     {
         string paramContent = parameterString.substr(header.size());
@@ -228,7 +254,7 @@ private:
     }
 
 public:
-    static size_t const MAX_PARAMETERS = 5;
+    static size_t const MAX_PARAMETERS = 6;
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
@@ -244,18 +270,21 @@ public:
         _numHashBuckets(chooseNumBuckets(_maxTableSize)),
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
-        _algorithm(RIGHT_TO_LEFT)
+        _algorithm(RIGHT_TO_LEFT),
+        _algorithmSet(false),
+        _keepDimensions(false)
     {
-        string const leftKeysHeader                = "left_keys=";
-        string const rightKeysHeader               = "right_keys=";
+        string const leftKeysHeader                = "left_ids=";
+        string const rightKeysHeader               = "right_ids=";
         string const maxTableSizeHeader            = "max_table_size=";
         string const chunkSizeHeader               = "chunk_size=";
         string const algorithmHeader               = "algorithm=";
-        bool leftKeysSet      = false;
-        bool rightKeysSet     = false;
-        bool maxTableSizeSet  = false;
-        bool chunkSizeSet     = false;
-        bool algorithmSet     = false;
+        string const keepDimensionsHeader          = "keep_dimensions=";
+        bool leftKeysSet       = false;
+        bool rightKeysSet      = false;
+        bool maxTableSizeSet   = false;
+        bool chunkSizeSet      = false;
+        bool keepDimensionsSet = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -282,7 +311,11 @@ public:
             }
             else if (starts_with(parameterString, algorithmHeader))
             {
-                setParam(parameterString, algorithmSet, algorithmHeader, &Settings::setParamAlgorithm);
+                setParam(parameterString, _algorithmSet, algorithmHeader, &Settings::setParamAlgorithm);
+            }
+            else if (starts_with(parameterString, keepDimensionsHeader))
+            {
+                setParam(parameterString, keepDimensionsSet, keepDimensionsHeader, &Settings::setParamKeepDimensions);
             }
             else
             {
@@ -307,16 +340,16 @@ private:
 
     void verifyInputs()
     {
-        throwIf(_leftKeys.size() == 0,                    "no left keys provided");
-        throwIf(_rightKeys.size() == 0,                   "no right keys provided");
-        throwIf(_leftKeys.size() != _rightKeys.size(),    "mismatched numbers of keys provided");
-        for(size_t i =0; i<_leftKeys.size(); ++i)
+        throwIf(_leftIds.size() == 0,                    "no left join-on fields provided");
+        throwIf(_rightKeys.size() == 0,                  "no right join-on fields provided");
+        throwIf(_leftIds.size() != _rightKeys.size(),    "mismatched numbers of keys provided");
+        for(size_t i =0; i<_leftIds.size(); ++i)
         {
-            size_t leftKey  = _leftKeys[i];
+            size_t leftKey  = _leftIds[i];
             size_t rightKey = _rightKeys[i];
-            throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left key out of bounds");
-            throwIf(rightKey >= _numRightAttrs + _numLeftDims, "right key out of bounds");
-            TypeId leftType   = leftKey   < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
+            throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left id out of bounds");
+            throwIf(rightKey >= _numRightAttrs + _numLeftDims, "right id out of bounds");
+            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
             TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true)[rightKey].getType() : TID_INT64;
             throwIf(leftType != rightType, "key types do not match");
         }
@@ -324,12 +357,12 @@ private:
 
     void mapAttributes()
     {
-        _numKeys = _leftKeys.size();
+        _numKeys = _leftIds.size();
         _leftMapToTuple.resize(_numLeftAttrs + _numLeftDims, -1);
         _rightMapToTuple.resize(_numRightAttrs + _numRightDims, -1);
         for(size_t i =0; i<_numKeys; ++i)
         {
-            size_t leftKey  = _leftKeys[i];
+            size_t leftKey  = _leftIds[i];
             size_t rightKey = _rightKeys[i];
             _leftMapToTuple[leftKey]   = i;
             _rightMapToTuple[rightKey] = i;
@@ -342,7 +375,7 @@ private:
         size_t j=_numKeys;
         for(size_t i =0; i<_numLeftAttrs + _numLeftDims; ++i)
         {
-            if(_leftMapToTuple[i] == -1)
+            if(_leftMapToTuple[i] == -1 && (i<_numLeftAttrs || _keepDimensions))
             {
                 _leftMapToTuple[i] = j++;
             }
@@ -351,7 +384,7 @@ private:
         j = _numKeys;
         for(size_t i =0; i<_numRightAttrs + _numRightDims; ++i)
         {
-            if(_rightMapToTuple[i] == -1)
+            if(_rightMapToTuple[i] == -1 && (i<_numRightAttrs || _keepDimensions))
             {
                 _rightMapToTuple[i] = j++;
             }
@@ -364,10 +397,11 @@ private:
         ostringstream output;
         for(size_t i=0; i<_numKeys; ++i)
         {
-            output<<_leftKeys[i]<<"->"<<_rightKeys[i]<<" ";
+            output<<_leftIds[i]<<"->"<<_rightKeys[i]<<" ";
         }
         output<<"buckets "<< _numHashBuckets;
         output<<" chunk "<<_chunkSize;
+        output<<" keep_dimensions "<<_keepDimensions;
         LOG4CXX_DEBUG(logger, "RJN keys "<<output.str().c_str());
     }
 
@@ -413,16 +447,6 @@ public:
         return _rightTupleSize;
     }
 
-    vector<size_t> const& getLeftKeys() const
-    {
-        return _leftKeys;
-    }
-
-    vector<size_t> const& getRightKeys() const
-    {
-        return _rightKeys;
-    }
-
     size_t getNumHashBuckets() const
     {
         return _numHashBuckets;
@@ -431,16 +455,6 @@ public:
     size_t getChunkSize() const
     {
         return _chunkSize;
-    }
-
-    ArrayDesc const& getLeftSchema() const
-    {
-        return _leftSchema;
-    }
-
-    ArrayDesc const& getRightSchema() const
-    {
-        return _rightSchema;
     }
 
     bool isLeftKey(size_t const i) const
@@ -485,6 +499,11 @@ public:
         return  isRightKey(rightField) ? _rightMapToTuple[rightField] : _rightMapToTuple[rightField] + _leftTupleSize - _numKeys;
     }
 
+    bool keepDimensions() const
+    {
+        return _keepDimensions;
+    }
+
     ArrayDesc getOutputSchema(shared_ptr< Query> query, string const name = "") const
     {
         Attributes outputAttributes(getNumOutputAttrs());
@@ -501,10 +520,14 @@ public:
         }
         for(size_t i =0; i<_numLeftDims; ++i)
         {
+            ssize_t destinationId = mapLeftToOutput(i + _numLeftAttrs);
+            if(destinationId < 0)
+            {
+                continue;
+            }
             DimensionDesc const& inputDim = _leftSchema.getDimensions()[i];
-            AttributeID destinationId = mapLeftToOutput(i + _numLeftAttrs);
             uint16_t flags = 0;
-            if(isLeftKey(i + _numLeftAttrs) && _keyNullable[destinationId])
+            if(isLeftKey(i + _numLeftAttrs) && _keyNullable[destinationId]) //is it joined with a nullable attribute?
             {
                 flags = AttributeDesc::IS_NULLABLE;
             }
@@ -522,12 +545,12 @@ public:
         }
         for(size_t i =0; i<_numRightDims; ++i)
         {
-            DimensionDesc const& inputDim = _rightSchema.getDimensions()[i];
-            if(isRightKey(i + _numRightAttrs))
+            ssize_t destinationId = mapRightToOutput(i + _numRightAttrs);
+            if(destinationId < 0 || isRightKey(i + _numRightAttrs))
             {
                 continue;
             }
-            AttributeID destinationId = mapRightToOutput(i + _numRightAttrs);
+            DimensionDesc const& inputDim = _rightSchema.getDimensions()[i];
             outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
         }
         outputAttributes = addEmptyTagAttribute(outputAttributes);
@@ -545,6 +568,11 @@ public:
     algorithm getAlgorithm() const
     {
         return _algorithm;
+    }
+
+    bool algorithmSet() const
+    {
+        return _algorithmSet;
     }
 };
 

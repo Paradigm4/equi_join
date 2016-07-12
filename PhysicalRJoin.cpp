@@ -135,7 +135,6 @@ public:
         ++_outputPosition[1];
     }
 
-
     shared_ptr<Array> finalize()
     {
         for(size_t i =0; i<_numAttributes; ++i)
@@ -158,7 +157,6 @@ public:
 
 class PhysicalRJoin : public PhysicalOperator
 {
-
 public:
     PhysicalRJoin(string const& logicalName,
                              string const& physicalName,
@@ -322,6 +320,11 @@ public:
         return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings);
     }
 
+//    size_t findSizeLowerBound(shared_ptr<Array> &input, shared_ptr<Query>& query, size_t const sizeLimit, size_t const stringSize)
+//    {
+//        //input->getSupportedAccess()
+//
+//    }
 
     shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
     {
@@ -329,6 +332,16 @@ public:
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
         Settings settings(inputSchemas, _parameters, false, query);
+        if(inputArrays[0]->getSupportedAccess() == Array::SINGLE_PASS)
+        {
+            LOG4CXX_DEBUG(logger, "RJN moving left to random access");
+            inputArrays[0] = ensureRandomAccess(inputArrays[0], query);
+        }
+        if(inputArrays[1]->getSupportedAccess() == Array::SINGLE_PASS)
+        {
+            LOG4CXX_DEBUG(logger, "RJN moving right to random access");
+            inputArrays[1] = ensureRandomAccess(inputArrays[1], query);
+        }
         if(settings.getAlgorithm() == Settings::LEFT_TO_RIGHT)
         {
             return replicationHashJoin<LEFT>(inputArrays, query, settings);
