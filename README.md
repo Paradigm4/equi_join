@@ -55,6 +55,7 @@ At the moment, one of the arrays must fit in memory on one node. The operator wi
 
 ## Still needs a lot of work!
  * implement the merge-join code path (using hash distribution, similar what https://github.com/Paradigm4/grouped_aggregate does)
+ * implement chunk filtering when joining by dimensions, possibly bloom filter for merge path
  * fix the parameters: accept proper dimension references and names
  * pick join-on keys automatically by checking for matching names, if not supplied
  * handle cases where join expands the data, potentially add boolean expression to run on the data as join is computed
