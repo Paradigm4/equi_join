@@ -118,13 +118,15 @@ private:
     vector<size_t>                _leftIds;          //key indeces in the left array:  attributes start at 0, dimensions start at numAttrs
     vector<size_t>                _rightKeys;        //key indeces in the right array: attributes start at 0, dimensions start at numAttrs
     vector<bool>                  _keyNullable;      //one per key, in the output
-    size_t                        _maxTableSize;
+    size_t                        _hashJoinThreshold;
     size_t                        _numHashBuckets;
     size_t                        _chunkSize;
     size_t                        _numInstances;
     algorithm                     _algorithm;
     bool                          _algorithmSet;
     bool                          _keepDimensions;
+    size_t                        _readAheadLimit;
+    size_t                        _varSize;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
@@ -171,7 +173,7 @@ private:
         setParamKeys(trimmedContent, _rightKeys, _numRightAttrs);
     }
 
-    void setParamMaxTableSize(string trimmedContent)
+    void setParamHashJoinThreshold(string trimmedContent)
     {
         try
         {
@@ -180,8 +182,8 @@ private:
             {
                 throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "max table size must be positive";
             }
-            _maxTableSize = res;
-            _numHashBuckets = chooseNumBuckets(_maxTableSize);
+            _hashJoinThreshold = res;
+            _numHashBuckets = chooseNumBuckets(_hashJoinThreshold);
         }
         catch (bad_lexical_cast const& exn)
         {
@@ -266,8 +268,8 @@ public:
         _numLeftDims(_leftSchema.getDimensions().size()),
         _numRightAttrs(_rightSchema.getAttributes(true).size()),
         _numRightDims(_rightSchema.getDimensions().size()),
-        _maxTableSize(Config::getInstance()->getOption<int>(CONFIG_MERGE_SORT_BUFFER)),
-        _numHashBuckets(chooseNumBuckets(_maxTableSize)),
+        _hashJoinThreshold(Config::getInstance()->getOption<int>(CONFIG_MERGE_SORT_BUFFER)),
+        _numHashBuckets(chooseNumBuckets(_hashJoinThreshold)),
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
         _algorithm(RIGHT_TO_LEFT),
@@ -276,15 +278,15 @@ public:
     {
         string const leftKeysHeader                = "left_ids=";
         string const rightKeysHeader               = "right_ids=";
-        string const maxTableSizeHeader            = "max_table_size=";
+        string const hashJoinThresholdHeader       = "hash_join_threshold=";
         string const chunkSizeHeader               = "chunk_size=";
         string const algorithmHeader               = "algorithm=";
         string const keepDimensionsHeader          = "keep_dimensions=";
-        bool leftKeysSet       = false;
-        bool rightKeysSet      = false;
-        bool maxTableSizeSet   = false;
-        bool chunkSizeSet      = false;
-        bool keepDimensionsSet = false;
+        bool leftKeysSet           = false;
+        bool rightKeysSet          = false;
+        bool hashJoinThresholdSet  = false;
+        bool chunkSizeSet          = false;
+        bool keepDimensionsSet     = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -301,9 +303,9 @@ public:
             {
                 setParam(parameterString, rightKeysSet, rightKeysHeader, &Settings::setParamRightKeys);
             }
-            else if (starts_with(parameterString, maxTableSizeHeader))
+            else if (starts_with(parameterString, hashJoinThresholdHeader))
             {
-                setParam(parameterString, maxTableSizeSet, maxTableSizeHeader, &Settings::setParamMaxTableSize);
+                setParam(parameterString, hashJoinThresholdSet, hashJoinThresholdHeader, &Settings::setParamHashJoinThreshold);
             }
             else if (starts_with(parameterString, chunkSizeHeader))
             {
@@ -573,6 +575,11 @@ public:
     bool algorithmSet() const
     {
         return _algorithmSet;
+    }
+
+    size_t getHashJoinThreshold() const
+    {
+        return _hashJoinThreshold;
     }
 };
 

@@ -24,6 +24,8 @@
 */
 
 #include <query/Operator.h>
+#include <util/Network.h>
+
 #include "JoinHashTable.h"
 
 
@@ -177,6 +179,104 @@ public:
         return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
     }
 
+    size_t findSizeLowerBound(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings, size_t const sizeLimit)
+    {
+        size_t result = 0;
+        ArrayDesc const& inputDesc = input->getArrayDesc();
+        size_t const nAttrs = inputDesc.getAttributes().size();
+        if(input->isMaterialized())
+        {
+            vector<shared_ptr<ConstArrayIterator> >aiters(nAttrs);
+            for(size_t i =0; i<nAttrs; ++i)
+            {
+                aiters[i] = input->getConstIterator(i);
+            }
+            while(!aiters[0]->end())
+            {
+                for(size_t i =0; i<nAttrs; ++i)
+                {
+                    result += aiters[i]->getChunk().getSize();
+                    if(result > sizeLimit)
+                    {
+                        return sizeLimit;
+                    }
+                }
+                for(size_t i =0; i<nAttrs; ++i)
+                {
+                    ++(*aiters[i]);
+                }
+            }
+        }
+        else
+        {
+            size_t cellSize = PhysicalBoundaries::getCellSizeBytes(inputDesc.getAttributes());
+            shared_ptr<ConstArrayIterator> iter = input->getConstIterator(nAttrs-1);
+            while(!iter->end())
+            {
+                result += iter->getChunk().count() * cellSize;
+                if(result > sizeLimit)
+                {
+                    return sizeLimit;
+                }
+                ++(*iter);
+            }
+        }
+        return result;
+    }
+
+    size_t globalFindSizeLowerBound(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings, size_t const sizeLimit)
+    {
+       size_t localSize = findSizeLowerBound(input,query,settings,sizeLimit);
+       size_t const nInstances = query->getInstancesCount();
+       InstanceID myId = query->getInstanceID();
+       std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
+       *((size_t*) buf->getData()) = localSize;
+       for(InstanceID i=0; i<nInstances; i++)
+       {
+           if(i != myId)
+           {
+               BufSend(i, buf, query);
+           }
+       }
+       for(InstanceID i=0; i<nInstances; i++)
+       {
+           if(i != myId)
+           {
+               buf = BufReceive(i,query);
+               size_t otherInstanceSize = *((size_t*) buf->getData());
+               localSize += otherInstanceSize;
+           }
+       }
+       return localSize;
+    }
+
+    Settings::algorithm pickAlgorithm(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
+    {
+        if(settings.algorithmSet()) //user override
+        {
+            return settings.getAlgorithm();
+        }
+        if(inputArrays[0]->getSupportedAccess() == Array::SINGLE_PASS)
+        {
+            LOG4CXX_DEBUG(logger, "RJN ensuring left random access");
+            inputArrays[0] = ensureRandomAccess(inputArrays[0], query);
+        }
+        size_t leftSize = globalFindSizeLowerBound(inputArrays[0], query, settings, settings.getHashJoinThreshold());
+        LOG4CXX_DEBUG(logger, "RJN left size "<<leftSize);
+        if(inputArrays[1]->getSupportedAccess() == Array::SINGLE_PASS)
+        {
+            LOG4CXX_DEBUG(logger, "RJN ensuring right random access");
+            inputArrays[1] = ensureRandomAccess(inputArrays[1], query); //TODO: well, after this nasty thing we can know the exact size
+        }
+        size_t rightSize = globalFindSizeLowerBound(inputArrays[1], query, settings, settings.getHashJoinThreshold());
+        LOG4CXX_DEBUG(logger, "RJN right size "<<rightSize);
+        if(leftSize < rightSize)
+        {
+            return Settings::LEFT_TO_RIGHT;
+        }
+        return Settings::RIGHT_TO_LEFT;
+    }
+
     //For hash join purposes, the handedness refers to which array is copied into a hash table and redistributed
     enum Handedness
     {
@@ -320,34 +420,21 @@ public:
         return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings);
     }
 
-//    size_t findSizeLowerBound(shared_ptr<Array> &input, shared_ptr<Query>& query, size_t const sizeLimit, size_t const stringSize)
-//    {
-//        //input->getSupportedAccess()
-//
-//    }
-
     shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
     {
         vector<ArrayDesc const*> inputSchemas(2);
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
         Settings settings(inputSchemas, _parameters, false, query);
-        if(inputArrays[0]->getSupportedAccess() == Array::SINGLE_PASS)
+        Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
+        if(algo == Settings::LEFT_TO_RIGHT)
         {
-            LOG4CXX_DEBUG(logger, "RJN moving left to random access");
-            inputArrays[0] = ensureRandomAccess(inputArrays[0], query);
-        }
-        if(inputArrays[1]->getSupportedAccess() == Array::SINGLE_PASS)
-        {
-            LOG4CXX_DEBUG(logger, "RJN moving right to random access");
-            inputArrays[1] = ensureRandomAccess(inputArrays[1], query);
-        }
-        if(settings.getAlgorithm() == Settings::LEFT_TO_RIGHT)
-        {
+            LOG4CXX_DEBUG(logger, "RJN running left-to-right");
             return replicationHashJoin<LEFT>(inputArrays, query, settings);
         }
         else
         {
+            LOG4CXX_DEBUG(logger, "RJN running right-to-left");
             return replicationHashJoin<RIGHT>(inputArrays, query, settings);
         }
     }
