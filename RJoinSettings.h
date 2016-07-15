@@ -105,9 +105,10 @@ class Settings
 public:
     enum algorithm
     {
-        LEFT_TO_RIGHT,
-        RIGHT_TO_LEFT,
-        MERGE
+        HASH_REPLICATE_LEFT,
+        HASH_REPLICATE_RIGHT,
+        MERGE_LEFT_FIRST,
+        MERGE_RIGHT_FIRST
     };
 
 private:
@@ -218,17 +219,21 @@ private:
 
     void setParamAlgorithm(string trimmedContent)
     {
-        if(trimmedContent == "left_to_right")
+        if(trimmedContent == "hash_replicate_left")
         {
-            _algorithm = LEFT_TO_RIGHT;
+            _algorithm = HASH_REPLICATE_LEFT;
         }
-        else if (trimmedContent == "right_to_left")
+        else if (trimmedContent == "hash_replicate_right")
         {
-            _algorithm = RIGHT_TO_LEFT;
+            _algorithm = HASH_REPLICATE_RIGHT;
         }
-        else if (trimmedContent == "merge")
+        else if (trimmedContent == "merge_left_first")
         {
-            _algorithm = MERGE;
+            _algorithm = MERGE_LEFT_FIRST;
+        }
+        else if (trimmedContent == "merge_right_first")
+        {
+            _algorithm = MERGE_RIGHT_FIRST;
         }
         else
         {
@@ -284,7 +289,7 @@ public:
         _numHashBuckets(chooseNumBuckets(_hashJoinThreshold)),
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
-        _algorithm(RIGHT_TO_LEFT),
+        _algorithm(HASH_REPLICATE_RIGHT),
         _algorithmSet(false),
         _keepDimensions(false)
     {

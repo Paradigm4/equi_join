@@ -618,11 +618,22 @@ public:
         }
         size_t rightSize = globalFindSizeLowerBound(inputArrays[1], query, settings, settings.getHashJoinThreshold());
         LOG4CXX_DEBUG(logger, "RJN right size "<<rightSize);
-        if(leftSize < rightSize)
+        if(leftSize < settings.getHashJoinThreshold())
         {
-            return Settings::LEFT_TO_RIGHT;
+            return Settings::HASH_REPLICATE_LEFT;
         }
-        return Settings::RIGHT_TO_LEFT;
+        else if(rightSize < settings.getHashJoinThreshold())
+        {
+            return Settings::HASH_REPLICATE_RIGHT;
+        }
+        else if(leftSize < rightSize)
+        {
+            return Settings::MERGE_LEFT_FIRST;
+        }
+        else
+        {
+            return Settings::MERGE_RIGHT_FIRST;
+        }
     }
 
     template <Handedness which>
@@ -967,7 +978,7 @@ public:
         return true;
     }
 
-    shared_ptr<Array> sortedMergeJoin(shared_ptr<Array>& leftSorted, shared_ptr<Array>& rightSorted, shared_ptr<Query>& query, Settings const& settings)
+    shared_ptr<Array> localSortedMergeJoin(shared_ptr<Array>& leftSorted, shared_ptr<Array>& rightSorted, shared_ptr<Query>& query, Settings const& settings)
     {
         MemArrayAppender output(settings, query, _schema.getName());
         vector<AttributeComparator> const& comparators = settings.getKeyComparators();
@@ -1066,21 +1077,25 @@ public:
         return output.finalize();
     }
 
+    template <Handedness which>
     shared_ptr<Array> mergeJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
-        shared_ptr<Array>& left = inputArrays[0];
-        left = readIntoPreSort<LEFT>(left, query, settings);
-        left = sortArray(left, query, settings);
-        left = sortedToPreSg<LEFT>(left, query, settings);
-        left = redistributeToRandomAccess(left,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        left = sortArray(left, query, settings);
-        shared_ptr<Array>& right = inputArrays[1];
-        right = readIntoPreSort<RIGHT>(right, query, settings);
-        right = sortArray(right, query, settings);
-        right = sortedToPreSg<RIGHT>(right, query, settings);
-        right = redistributeToRandomAccess(right,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        right = sortArray(right, query, settings);
-        return sortedMergeJoin(left, right, query, settings);
+        shared_ptr<Array>& first = (which == LEFT ? inputArrays[0] : inputArrays[1]);
+        first = readIntoPreSort<which>(first, query, settings);
+        first = sortArray(first, query, settings);
+        first = sortedToPreSg<which>(first, query, settings);
+        first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
+        //        size_t localFirstSize = computeExactArraySize(left, query);
+        shared_ptr<Array>& second = (which == LEFT ? inputArrays[1] : inputArrays[0]);
+        second = readIntoPreSort<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
+        second = sortArray(second, query, settings);
+        second = sortedToPreSg<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
+        second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
+        //        size_t localSecondSize = computeExactArraySize(second, query);
+        //TODO: if first or second is small - read it into a table at this point
+        first = sortArray(first, query, settings);
+        second= sortArray(second, query, settings);
+        return which == LEFT ? localSortedMergeJoin(first, second, query, settings) :  localSortedMergeJoin(second, first, query, settings);
     }
 
     shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
@@ -1090,19 +1105,23 @@ public:
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
         Settings settings(inputSchemas, _parameters, false, query);
         Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
-        if(algo == Settings::LEFT_TO_RIGHT)
+        if(algo == Settings::HASH_REPLICATE_LEFT)
         {
             LOG4CXX_DEBUG(logger, "RJN running left-to-right");
             return replicationHashJoin<LEFT>(inputArrays, query, settings);
         }
-        else if (algo == Settings::RIGHT_TO_LEFT)
+        else if (algo == Settings::HASH_REPLICATE_RIGHT)
         {
             LOG4CXX_DEBUG(logger, "RJN running right-to-left");
             return replicationHashJoin<RIGHT>(inputArrays, query, settings);
         }
+        else if (algo == Settings::MERGE_LEFT_FIRST)
+        {
+            return mergeJoin<LEFT>(inputArrays, query, settings);
+        }
         else
         {
-            return mergeJoin(inputArrays, query, settings);
+            return mergeJoin<RIGHT>(inputArrays, query, settings);
         }
     }
 };
