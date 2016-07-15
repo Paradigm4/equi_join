@@ -1107,20 +1107,22 @@ public:
         Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
         if(algo == Settings::HASH_REPLICATE_LEFT)
         {
-            LOG4CXX_DEBUG(logger, "RJN running left-to-right");
+            LOG4CXX_DEBUG(logger, "RJN running hash_replicate_left");
             return replicationHashJoin<LEFT>(inputArrays, query, settings);
         }
         else if (algo == Settings::HASH_REPLICATE_RIGHT)
         {
-            LOG4CXX_DEBUG(logger, "RJN running right-to-left");
+            LOG4CXX_DEBUG(logger, "RJN running hash_replicate_right");
             return replicationHashJoin<RIGHT>(inputArrays, query, settings);
         }
         else if (algo == Settings::MERGE_LEFT_FIRST)
         {
+            LOG4CXX_DEBUG(logger, "RJN running merge_left_first");
             return mergeJoin<LEFT>(inputArrays, query, settings);
         }
         else
         {
+            LOG4CXX_DEBUG(logger, "RJN running merge_right_first");
             return mergeJoin<RIGHT>(inputArrays, query, settings);
         }
     }
