@@ -62,7 +62,7 @@ The operator first estimates the lower bound sizes of the two input arrays and t
 It is easy to determine if an input array is materialized (leaf of a query or output of a materializing operator). If this is the case, the exact size of the array can be determined very quickly (O of number of chunks with no disk scans). Otherwise, the operator initiates a pre-scan of just the Empty Tag attribute to find the number of non-empty cells in the array. The pre-scan continues until either completion, or the estimated size reaching `hash_join_threshold`. The per-instance lower bounds of `hash_join_threshold` or less are then added together with one round of message exchange.
 
 ### Hash Replicate
-If it is determined (or user-dictated) that one of the arrays is small enough to fit in memory on every node, then that array is copied entirely to every instance and loaded into an in-memory hash table. The other array is then read as-is and joined via hash table lookup. TBD: filter the chunks of the other array.
+If it is determined (or user-dictated) that one of the arrays is small enough to fit in memory on every instance, then that array is copied entirely to every instance and loaded into an in-memory hash table. The other array is then read as-is and joined via hash table lookup. TBD: filter the chunks of the other array.
 
 ### Merge
 If both arrays are sufficiently large, the smaller array's join keys are hashed and the hash is used to redistribute it such that each instance gets roughly an equal portion. The other array is then redistributed along the same hash, ensuring co-location. Finally the redistributed arrays are sorted and joined using a merge sort pass. TBD: also filter chunks of the other array and potentially add a bloom filter.
