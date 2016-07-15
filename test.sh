@@ -8,7 +8,7 @@ EXPFILE=$MYDIR/test.expected
 
 iquery -anq "remove(left)"  > /dev/null 2>&1
 iquery -anq "remove(right)" > /dev/null 2>&1
-iquery -anq "store(apply(build(<a:string>[i=0:5,2,0], '[(abc),(def),(ghi),(jkl),(mno)]', true), b, double(i)*1.1), left)" > /dev/null 2>&1
+iquery -anq "store(apply(build(<a:string>[i=0:5,2,0], '[(null),(def),(ghi),(jkl),(mno)]', true), b, double(i)*1.1), left)" > /dev/null 2>&1
 iquery -anq "store(apply(build(<c:string>[j=1:5,3,0], '[(def),(mno),(pqr),(def)]', true), d, j), right)" > /dev/null 2>&1
 
 rm $OUTFILE > /dev/null 2>&1
