@@ -143,10 +143,10 @@ public:
     {}
 
 public:
-    uint32_t hashKeys(vector<Value const*> const& keys) const
+    static uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys)
     {
         size_t totalSize = 0;
-        for(size_t i =0; i<_numKeys; ++i)
+        for(size_t i =0; i<numKeys; ++i)
         {
             totalSize += keys[i]->size();
         }
@@ -156,7 +156,7 @@ public:
             buf.resize(totalSize);
         }
         char* ch = &buf[0];
-        for(size_t i =0; i<_numKeys; ++i)
+        for(size_t i =0; i<numKeys; ++i)
         {
             memcpy(ch, keys[i]->data(), keys[i]->size());
             ch += keys[i]->size();
@@ -240,7 +240,7 @@ private:
 public:
     void insert(vector<Value const*> const& tuple)
     {
-        uint32_t hash = hashKeys(tuple) % _numHashBuckets;
+        uint32_t hash = hashKeys(tuple, _numKeys) % _numHashBuckets;
         int newGroup = 1;
         int newHash = 1;
         HashTableEntry** entry = &(_buckets[hash]);
@@ -269,7 +269,7 @@ public:
 
     bool contains(std::vector<Value const*> const& keys, uint32_t& hash) const
     {
-        hash = hashKeys(keys) % _numHashBuckets;
+        hash = hashKeys(keys, _numKeys) % _numHashBuckets;
         HashTableEntry const* bucket = _buckets[hash];
         while(bucket != NULL)
         {
@@ -372,7 +372,7 @@ public:
 
         bool find(vector<Value const*> const& keys)
         {
-            _currHash = _table->hashKeys(keys) % _table->_numHashBuckets;
+            _currHash = _table->hashKeys(keys, _table->_numKeys) % _table->_numHashBuckets;
             _entry = _table->_buckets[_currHash];
             while(_entry != NULL && ! _table->keysEqual(getTuple(), keys))
             {

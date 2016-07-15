@@ -90,6 +90,13 @@ static size_t chooseNumBuckets(size_t maxTableSize)
    return tableSizes[NUM_SIZES-1];
 }
 
+//For hash join purposes, the handedness refers to which array is copied into a hash table and redistributed
+enum Handedness
+{
+    LEFT,
+    RIGHT
+};
+
 /*
  * Settings for the grouped_aggregate operator.
  */
@@ -99,7 +106,8 @@ public:
     enum algorithm
     {
         LEFT_TO_RIGHT,
-        RIGHT_TO_LEFT         //TODO:add MERGE here
+        RIGHT_TO_LEFT,
+        MERGE
     };
 
 private:
@@ -217,6 +225,10 @@ private:
         else if (trimmedContent == "right_to_left")
         {
             _algorithm = RIGHT_TO_LEFT;
+        }
+        else if (trimmedContent == "merge")
+        {
+            _algorithm = MERGE;
         }
         else
         {
@@ -560,6 +572,42 @@ public:
         outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
         outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
         return ArrayDesc(name.size() == 0 ? "rjoin" : name, outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
+    }
+
+    template <Handedness which>
+    ArrayDesc getPreSgSchema(shared_ptr< Query> query) const
+    {
+        size_t const numAttrs = ( which == LEFT ? _leftTupleSize : _rightTupleSize) + 1; //plus hash
+        Attributes outputAttributes(numAttrs);
+        outputAttributes[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0,0);
+        ArrayDesc const& inputSchema = ( which == LEFT ? _leftSchema : _rightSchema);
+        for(AttributeID i = 0; i < (which == LEFT ? _numLeftAttrs : _numRightAttrs); ++i)
+        {
+            AttributeDesc const& input = inputSchema.getAttributes(true)[i];
+            AttributeID destinationId = (which == LEFT ? mapLeftToTuple(i) : mapRightToTuple(i));
+            uint16_t flags = input.getFlags();
+            if( (which == LEFT ? isLeftKey(i) : isRightKey(i)) && _keyNullable[destinationId] )
+            {
+                flags |= AttributeDesc::IS_NULLABLE;
+            }
+            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
+        }
+        for(size_t i = 0; i< (which == LEFT ? _numLeftDims : _numRightDims); ++i )
+        {
+            ssize_t destinationId = (which == LEFT ? mapLeftToTuple(i + _numLeftAttrs) : mapRightToTuple(i + _numRightAttrs));
+            if(destinationId < 0)
+            {
+                continue;
+            }
+            DimensionDesc const& inputDim = inputSchema.getDimensions()[i];
+            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
+        }
+        outputAttributes = addEmptyTagAttribute(outputAttributes);
+        Dimensions outputDimensions;
+        outputDimensions.push_back(DimensionDesc("dst_instance_id", 0, _numInstances-1,             1,         0));
+        outputDimensions.push_back(DimensionDesc("src_instance_id", 0, _numInstances-1,             1,         0));
+        outputDimensions.push_back(DimensionDesc("value_no",        0, CoordinateBounds::getMax(), _chunkSize, 0));
+        return ArrayDesc("rjoin_state" , outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
     }
 
     vector <AttributeComparator> const& getKeyComparators() const

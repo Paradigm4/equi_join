@@ -62,6 +62,13 @@ public:
         inputSchemas.push_back(&(schemas[1]));
         Settings settings(inputSchemas, _parameters, true, query);
         return settings.getOutputSchema(query);
+//        ArrayDesc preSg = settings.getPreSgSchema <LEFT> (query);
+////        return preSg;
+//        Attributes atts = preSg.getAttributes();
+//        Dimensions dims;
+//        dims.push_back(DimensionDesc("n", 0, CoordinateBounds::getMax(), settings.getChunkSize(), 0));
+//        return ArrayDesc("result", atts, dims, defaultPartitioning(), query->getDefaultArrayResidency());
+
     }
 };
 

@@ -60,3 +60,5 @@ iquery -aq "sort(rjoin(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=lef
 iquery -aq "sort(rjoin(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=right_to_left', 'keep_dimensions=false'), d,c,a,b)">> $OUTFILE 2>&1
 iquery -aq "sort(rjoin(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=left_to_right', 'keep_dimensions=true'), d,c,a,b)" >> $OUTFILE 2>&1
 iquery -aq "sort(rjoin(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=right_to_left', 'keep_dimensions=TRUE'), d,c,a,b)" >> $OUTFILE 2>&1
+
+diff test.out test.expected
