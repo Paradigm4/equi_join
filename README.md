@@ -37,12 +37,13 @@ $ iquery -aq "rjoin(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
 rjoin(left_array, right_array, [, 'setting=value` [,...]])
 ```
 Where:
- * left and right array could be any SciDB arrays or operator outputs
- * `left_ids=a,~b,c`: 0-based dimension or attribute numbers to use as join keys from the left array; dimensions prefaced with `~`
- * `right_ids=d,e,f`: 0-based dimension or attribute numbers to use as join keys from the right array; dimensions prefaced with `~`
- * `chunk_size=S`: for the output
- * `keep_dimensions=0/1`: 1 if the output should contain all the input dimensions, converted to attributes. 0 is default, meaning dimensions are only retained if they are join keys.
- * `algorithm=name`: a hard override on how to perform the join, currently supported values are `left_to_right` and `right_to_left`
+* left and right array could be any SciDB arrays or operator outputs
+* `left_ids=a,~b,c`: 0-based dimension or attribute numbers to use as join keys from the left array; dimensions prefaced with `~`
+* `right_ids=d,e,f`: 0-based dimension or attribute numbers to use as join keys from the right array; dimensions prefaced with `~`
+* `chunk_size=S`: for the output
+* `keep_dimensions=0/1`: 1 if the output should contain all the input dimensions, converted to attributes. 0 is default, meaning dimensions are only retained if they are join keys.
+* `algorithm=name`: a hard override on how to perform the join, currently supported values are:
+   *`left_to_right`.
  
 There should be as many left_ids as right_ids and they must match data types (dimensions are int64). The result is returned as:
 `<join_key_0:type [NULL], join_key_1:.., left_att_0:type, left_att_1,... right_att_0...> [instance_id, value_no]`
