@@ -495,6 +495,92 @@ public:
     }
 };
 
+template <Handedness which>
+class ChunkFilter
+{
+private:
+    size_t _numJoinedDimensions;
+    vector<size_t>     _trainingArrayFields;    //index into the training array tuple
+    vector<size_t>     _filterArrayDimensions;  //index into the filtered array dimensions
+    vector<Coordinate> _filterArrayOrigins;
+    vector<Coordinate> _filterChunkSizes;
+    set<Coordinates> _chunkHits;
+
+public:
+    ChunkFilter(Settings const& settings, ArrayDesc const& leftSchema, ArrayDesc const& rightSchema):
+        _numJoinedDimensions(0)
+    {
+        size_t const numFilterAtts = which == LEFT ? settings.getNumRightAttrs() : settings.getNumLeftAttrs();
+        size_t const numFilterDims = which == LEFT ? settings.getNumRightDims() : settings.getNumLeftDims();
+        for(size_t i=numFilterAtts; i<numFilterAtts+numFilterDims; ++i)
+        {
+            if(which == LEFT ? settings.isRightKey(i) : settings.isLeftKey(i))
+            {
+                _numJoinedDimensions ++;
+                _trainingArrayFields.push_back( which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i));
+                size_t dimensionId = i - numFilterAtts;
+                _filterArrayDimensions.push_back(dimensionId);
+                DimensionDesc const& dimension = which == LEFT ? rightSchema.getDimensions()[dimensionId] : leftSchema.getDimensions()[dimensionId];
+                _filterArrayOrigins.push_back(dimension.getStartMin());
+                _filterChunkSizes.push_back(dimension.getChunkInterval());
+            }
+        }
+        ostringstream message;
+        message<<"RJN chunk filter initialized dimensions "<<_numJoinedDimensions<<", training fields ";
+        for(size_t i=0; i<_numJoinedDimensions; ++i)
+        {
+            message<<_trainingArrayFields[i]<<" ";
+        }
+        message<<", filter dimensions ";
+        for(size_t i=0; i<_numJoinedDimensions; ++i)
+        {
+            message<<_filterArrayDimensions[i]<<" ";
+        }
+        message<<", filter origins ";
+        for(size_t i=0; i<_numJoinedDimensions; ++i)
+        {
+            message<<_filterArrayOrigins[i]<<" ";
+        }
+        message<<", filter chunk sizes ";
+        for(size_t i=0; i<_numJoinedDimensions; ++i)
+        {
+            message<<_filterChunkSizes[i]<<" ";
+        }
+        LOG4CXX_DEBUG(logger, message.str());
+    }
+
+    void addTrainingTuple(vector<Value const*> const& tuple)
+    {
+        if(_numJoinedDimensions==0)
+        {
+            return;
+        }
+        Coordinates input(_numJoinedDimensions);
+        for(size_t i=0; i<_numJoinedDimensions; ++i)
+        {
+            input[i] = ((tuple[_trainingArrayFields[i]]->getInt64() - _filterArrayOrigins[i]) / _filterChunkSizes[i]) * _filterChunkSizes[i] + _filterArrayOrigins[i];
+        }
+        _chunkHits.insert(input);
+    }
+
+    bool containsChunk(Coordinates const& inputChunkPos) const
+    {
+        if(_numJoinedDimensions==0)
+        {
+            return true;
+        }
+        Coordinates input(_numJoinedDimensions);
+        for(size_t i=0; i<_numJoinedDimensions; ++i)
+        {
+            input[i] = inputChunkPos[_filterArrayDimensions[i]];
+        }
+        bool result = _chunkHits.count(input);
+        return result;
+    }
+};
+
+
+
 } //namespace rjoin
 
 class PhysicalRJoin : public PhysicalOperator
@@ -637,7 +723,7 @@ public:
     }
 
     template <Handedness which>
-    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings)
+    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilter<which>& chunkFilter)
     {
         size_t const nAttrs = (which == LEFT ?  settings.getNumLeftAttrs() : settings.getNumRightAttrs());
         size_t const nDims  = (which == LEFT ?  settings.getNumLeftDims()  : settings.getNumRightDims());
@@ -694,6 +780,7 @@ public:
                     }
                     continue;
                 }
+                chunkFilter.addTrainingTuple(tuple);
                 table.insert(tuple);
                 for(size_t i=0; i<nAttrs; ++i)
                 {
@@ -708,7 +795,7 @@ public:
     }
 
     template <Handedness which>
-    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings)
+    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings, ChunkFilter<which> const& chunkFilter)
     {
         //handedness LEFT means the LEFT array is in table so this reads in reverse
         size_t const nAttrs = (which == LEFT ?  settings.getNumRightAttrs() : settings.getNumLeftAttrs());
@@ -726,6 +813,15 @@ public:
         }
         while(!aiters[0]->end())
         {
+            Coordinates const& chunkPos = aiters[0]->getPosition();
+            if(!chunkFilter.containsChunk(chunkPos))
+            {
+                for(size_t i=0; i<nAttrs; ++i)
+                {
+                    ++(*aiters[i]);
+                }
+                continue;
+            }
             for(size_t i=0; i<nAttrs; ++i)
             {
                 citers[i] = aiters[i]->getChunk().getConstIterator();
@@ -799,13 +895,14 @@ public:
     template <Handedness which>
     shared_ptr<Array> replicationHashJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
+        ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
         shared_ptr<Array> redistributed = (which == LEFT ? inputArrays[0] : inputArrays[1]);
         redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query);
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
-        readIntoTable<which> (redistributed, table, settings);
-        return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings);
+        readIntoTable<which> (redistributed, table, settings, filter);
+        return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter);
     }
 
     template <Handedness which>

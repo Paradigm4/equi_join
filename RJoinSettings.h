@@ -285,8 +285,8 @@ public:
         _numLeftDims(_leftSchema.getDimensions().size()),
         _numRightAttrs(_rightSchema.getAttributes(true).size()),
         _numRightDims(_rightSchema.getDimensions().size()),
-        _hashJoinThreshold(Config::getInstance()->getOption<int>(CONFIG_MERGE_SORT_BUFFER)),
-        _numHashBuckets(chooseNumBuckets(_hashJoinThreshold)),
+        _hashJoinThreshold(Config::getInstance()->getOption<int>(CONFIG_MERGE_SORT_BUFFER) * 1024 * 1024 ),
+        _numHashBuckets(chooseNumBuckets(_hashJoinThreshold / (1024*1024))),
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
         _algorithm(HASH_REPLICATE_RIGHT),
@@ -367,7 +367,7 @@ private:
             size_t leftKey  = _leftIds[i];
             size_t rightKey = _rightKeys[i];
             throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left id out of bounds");
-            throwIf(rightKey >= _numRightAttrs + _numLeftDims, "right id out of bounds");
+            throwIf(rightKey >= _numRightAttrs + _numRightDims, "right id out of bounds");
             TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
             TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true)[rightKey].getType() : TID_INT64;
             throwIf(leftType != rightType, "key types do not match");

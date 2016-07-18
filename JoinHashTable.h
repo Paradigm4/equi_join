@@ -379,6 +379,7 @@ public:
                 if(!_table->keysLess(getTuple(), keys))
                 {
                     _entry = NULL;
+                    break;
                 }
                 _entry = _entry->next;
             }
