@@ -1,4 +1,4 @@
-# rjoin
+# rjoin [Under Construction]
 Relational-style Join of SciDB Arrays by Attributes. Work in progress.
 
 ## Examples
