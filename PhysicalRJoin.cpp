@@ -53,6 +53,7 @@ private:
     Coordinates _outputPosition;
     vector<shared_ptr<ArrayIterator> >_arrayIterators;
     vector<shared_ptr<ChunkIterator> >_chunkIterators;
+    Value _boolTrue;
 
 public:
     MemArrayAppender(Settings const& settings, shared_ptr<Query> const& query, string const name = ""):
@@ -65,15 +66,16 @@ public:
         _query(query),
         _settings(settings),
         _outputPosition(2 , 0),
-        _arrayIterators(_numAttributes, NULL),
-        _chunkIterators(_numAttributes, NULL)
+        _arrayIterators(_numAttributes+1, NULL),
+        _chunkIterators(_numAttributes+1, NULL)
     {
         _outputPosition[0] = _myInstanceId;
         _outputPosition[1] = 0;
-        for(size_t i =0; i<_numAttributes; ++i)
+        for(size_t i =0; i<_numAttributes+1; ++i)
         {
             _arrayIterators[i] = _output->getIterator(i);
         }
+        _boolTrue.setBool(true);
     }
 
 public:
@@ -81,15 +83,13 @@ public:
     {
         if( _outputPosition[1] % _chunkSize == 0)
         {
-            for(size_t i=0; i<_numAttributes; ++i)
+            for(size_t i=0; i<_numAttributes+1; ++i)
             {
                 if(_chunkIterators[i].get())
                 {
                     _chunkIterators[i]->flush();
                 }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, i == 0 ?
-                                                                                ChunkIterator::SEQUENTIAL_WRITE :
-                                                                                ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
+                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
             }
         }
         for(size_t i=0; i<_numAttributes; ++i)
@@ -105,6 +105,8 @@ public:
                 _chunkIterators[i]->writeItem(*v);
             }
         }
+        _chunkIterators[_numAttributes]->setPosition(_outputPosition);
+        _chunkIterators[_numAttributes]->writeItem(_boolTrue);
         ++_outputPosition[1];
     }
 
@@ -112,15 +114,13 @@ public:
     {
         if( _outputPosition[1] % _chunkSize == 0)
         {
-            for(size_t i=0; i<_numAttributes; ++i)
+            for(size_t i=0; i<_numAttributes+1; ++i)
             {
                 if(_chunkIterators[i].get())
                 {
                     _chunkIterators[i]->flush();
                 }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, i == 0 ?
-                                                                                ChunkIterator::SEQUENTIAL_WRITE :
-                                                                                ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
+                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
             }
         }
         for(size_t i=0; i<_numAttributes; ++i)
@@ -135,6 +135,8 @@ public:
                 _chunkIterators[i]->writeItem(*(right[i - _leftTupleSize + _numKeys ]));
             }
         }
+        _chunkIterators[_numAttributes]->setPosition(_outputPosition);
+        _chunkIterators[_numAttributes]->writeItem(_boolTrue);
         ++_outputPosition[1];
     }
 
@@ -142,15 +144,13 @@ public:
     {
         if( _outputPosition[1] % _chunkSize == 0)
         {
-            for(size_t i=0; i<_numAttributes; ++i)
+            for(size_t i=0; i<_numAttributes+1; ++i)
             {
                 if(_chunkIterators[i].get())
                 {
                     _chunkIterators[i]->flush();
                 }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, i == 0 ?
-                                                                                ChunkIterator::SEQUENTIAL_WRITE :
-                                                                                ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
+                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
             }
         }
         for(size_t i=0; i<_numAttributes; ++i)
@@ -165,12 +165,14 @@ public:
                 _chunkIterators[i]->writeItem(*(right[i - _leftTupleSize + _numKeys ]));
             }
         }
+        _chunkIterators[_numAttributes]->setPosition(_outputPosition);
+        _chunkIterators[_numAttributes]->writeItem(_boolTrue);
         ++_outputPosition[1];
     }
 
     shared_ptr<Array> finalize()
     {
-        for(size_t i =0; i<_numAttributes; ++i)
+        for(size_t i =0; i<_numAttributes+1; ++i)
         {
             if(_chunkIterators[i].get())
             {
@@ -828,15 +830,28 @@ public:
             }
             while(!citers[0]->end())
             {
+                bool anyNull = false;
                 for(size_t i=0; i<nAttrs; ++i)
                 {
                     Value const& v = citers[i]->getItem();
                     ssize_t idx = which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i);
                     if (idx >= 0)
                     {
-                       Value const& v = citers[i]->getItem();
-                       tuple[ idx ] = &v;
+                        if(idx<((ssize_t)nKeys) && v.isNull())
+                        {
+                            anyNull = true;
+                            break;
+                        }
+                        tuple[ idx ] = &v;
                     }
+                }
+                if(anyNull)
+                {
+                    for(size_t i=0; i<nAttrs; ++i)
+                    {
+                        ++(*citers[i]);
+                    }
+                    continue;
                 }
                 Coordinates const& pos = citers[0]->getPosition();
                 for(size_t i =0; i<nDims; ++i)
@@ -847,23 +862,6 @@ public:
                         dimVal[i].setInt64(pos[i]);
                         tuple [ idx ] = &dimVal[i];
                     }
-                }
-                bool anyNull = false;
-                for(size_t i =0; i<nKeys; ++i)
-                {
-                    if(tuple[i]->isNull())
-                    {
-                        anyNull = true;
-                        break;
-                    }
-                }
-                if(anyNull)
-                {
-                    for(size_t i=0; i<nAttrs; ++i)
-                    {
-                        ++(*citers[i]);
-                    }
-                    continue;
                 }
                 iter.find(tuple);
                 while(!iter.end() && iter.atKeys(tuple))
@@ -877,7 +875,7 @@ public:
                     {
                         result.writeTuple(tuple, tablePiece);
                     }
-                    iter.next();
+                    iter.nextAtHash();
                 }
                 for(size_t i=0; i<nAttrs; ++i)
                 {

@@ -334,6 +334,19 @@ public:
             return _currHash >= _table->_numHashBuckets;
         }
 
+        void nextAtHash()
+        {
+            if (end())
+            {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "iterating past end";
+            }
+            _entry = _entry->next;
+            if ( _entry == NULL )
+            {
+                _currHash = _table->_numHashBuckets; //invalidate
+            }
+        }
+
         void next()
         {
             if (end())

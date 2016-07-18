@@ -25,7 +25,7 @@ endif
 INSTALL_DIR = $(SCIDB)/lib/scidb/plugins
 
 # Include the OPTIMIZED flags for non-debug use
-OPTIMIZED=-O3 -DNDEBUG
+OPTIMIZED=-O3 -DNDEBUG -ggdb3 -g
 DEBUG=-g -ggdb3
 CCFLAGS = -pedantic -W -Wextra -Wall -Wno-variadic-macros -Wno-strict-aliasing \
          -Wno-long-long -Wno-unused-parameter -Wno-unused -fPIC $(OPTIMIZED) 
