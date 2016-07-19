@@ -383,6 +383,8 @@ private:
         {
             size_t leftKey  = _leftIds[i];
             size_t rightKey = _rightKeys[i];
+            throwIf(_leftMapToTuple[leftKey] != -1, "left keys not unique");
+            throwIf(_rightMapToTuple[rightKey] != -1, "right keys not unique");
             _leftMapToTuple[leftKey]   = i;
             _rightMapToTuple[rightKey] = i;
             TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;

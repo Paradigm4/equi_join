@@ -497,6 +497,178 @@ public:
     }
 };
 
+class BitVector
+{
+private:
+    size_t const _size;
+    vector<char> _data;
+
+public:
+    BitVector (size_t const bitSize):
+        _size(bitSize),
+        _data( _size+7 / 8, 0)
+    {}
+
+    BitVector(size_t const bitSize, void const* data):
+        _size(bitSize),
+        _data( _size+7 / 8, 0)
+    {
+        memcpy(&(_data[0]), data, _data.size());
+    }
+
+    void set(size_t const& idx)
+    {
+        if(idx >= _size)
+        {
+            throw 0;
+        }
+        size_t byteIdx = idx / 8;
+        size_t bitIdx  = idx - byteIdx * 8;
+        char& b = _data[ byteIdx ];
+        b = b | (1 << bitIdx);
+    }
+
+    bool get(size_t const& idx) const
+    {
+        if(idx >= _size)
+        {
+            throw 0;
+        }
+        size_t byteIdx = idx / 8;
+        size_t bitIdx  = idx - byteIdx * 8;
+        char const& b = _data[ byteIdx ];
+        return (b & (1 << bitIdx));
+    }
+
+    size_t getBitSize() const
+    {
+        return _size;
+    }
+
+    size_t getByteSize() const
+    {
+        return _data.size();
+    }
+
+    char const* getData() const
+    {
+        return &(_data[0]);
+    }
+
+    void orIn(BitVector const& other)
+    {
+        if(other._size != _size)
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "OR-ing in unequal vit vectors";
+        }
+        for(size_t i =0; i<_data.size(); ++i)
+        {
+            _data[i] != other._data[i];
+        }
+    }
+};
+
+class BloomFilter
+{
+private:
+    static uint32_t const hashSeed1 = 0x5C1DB123;
+    static uint32_t const hashSeed2 = 0xACEDBEEF;
+    static size_t const defaultSize = 33554467; //about 4MB, why not?
+    BitVector _vec;
+    mutable vector<char> _hashBuf;
+
+public:
+    BloomFilter(size_t const size = defaultSize):
+        _vec(size),
+        _hashBuf(64)
+    {}
+
+    void addData( char const* data, size_t const dataSize )
+    {
+        uint32_t hash1 = JoinHashTable::murmur3_32(data, dataSize, hashSeed1) % _vec.getBitSize();
+        uint32_t hash2 = JoinHashTable::murmur3_32(data, dataSize, hashSeed2) % _vec.getBitSize();
+        _vec.set(hash1);
+        _vec.set(hash2);
+    }
+
+    bool hasData(char const* data, size_t const dataSize ) const
+    {
+        uint32_t hash1 = JoinHashTable::murmur3_32(data, dataSize, hashSeed1) % _vec.getBitSize();
+        uint32_t hash2 = JoinHashTable::murmur3_32(data, dataSize, hashSeed2) % _vec.getBitSize();
+        return _vec.get(hash1) && _vec.get(hash2);
+    }
+
+    void addTuple(vector<Value const*> data, size_t const nKeys)
+    {
+        size_t totalSize = 0;
+        for(size_t i=0; i<nKeys; ++i)
+        {
+            totalSize+=data[i]->size();
+        }
+        if(_hashBuf.size() < totalSize)
+        {
+            _hashBuf.resize(totalSize);
+        }
+        char* ch = &_hashBuf[0];
+        for(size_t i =0; i<nKeys; ++i)
+        {
+            memcpy(ch, data[i]->data(), data[i]->size());
+            ch += data[i]->size();
+        }
+        addData(&_hashBuf[0], totalSize);
+    }
+
+    bool hasTuple(vector<Value const*> data, size_t const nKeys) const
+    {
+        size_t totalSize = 0;
+        for(size_t i=0; i<nKeys; ++i)
+        {
+            totalSize+=data[i]->size();
+        }
+        if(_hashBuf.size() < totalSize)
+        {
+            _hashBuf.resize(totalSize);
+        }
+        char* ch = &_hashBuf[0];
+        for(size_t i =0; i<nKeys; ++i)
+        {
+            memcpy(ch, data[i]->data(), data[i]->size());
+            ch += data[i]->size();
+        }
+        return hasData(&_hashBuf[0], totalSize);
+    }
+
+    void globalExchange(shared_ptr<Query>& query)
+    {
+       size_t const nInstances = query->getInstancesCount();
+       InstanceID myId = query->getInstanceID();
+       std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
+       memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+       for(InstanceID i=0; i<nInstances; i++)
+       {
+           if(i != myId)
+           {
+               BufSend(i, buf, query);
+           }
+       }
+       for(InstanceID i=0; i<nInstances; i++)
+       {
+           if(i != myId)
+           {
+               buf = BufReceive(i,query);
+               if(buf->getSize() != _vec.getByteSize())
+               {
+                   throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "exchanging unequal bit vectors";
+               }
+               BitVector incoming(_vec.getBitSize(), buf->getData());
+               _vec.orIn(incoming);
+           }
+       }
+    }
+};
+
+
+
 template <Handedness which>
 class ChunkFilter
 {
@@ -919,6 +1091,7 @@ public:
         Value hashVal;
         tuple[tupleSize] = &hashVal;
         size_t const hashMod = settings.getNumHashBuckets();
+        vector<char> hashBuf(64);
         for(size_t i=0; i<nAttrs; ++i)
         {
             aiters[i] = inputArray->getConstIterator(i);
@@ -951,7 +1124,7 @@ public:
                         tuple [ idx ] = &dimVal[i];
                     }
                 }
-                hashVal.setUint32(JoinHashTable::hashKeys(tuple, numKeys) % hashMod);
+                hashVal.setUint32(JoinHashTable::hashKeys(tuple, numKeys, hashBuf) % hashMod);
                 writer.writeTuple(tuple);
                 for(size_t i=0; i<nAttrs; ++i)
                 {

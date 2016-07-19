@@ -58,6 +58,8 @@ private:
     // MurmurHash3 was written by Austin Appleby, and is placed in the public
     // domain. The author hereby disclaims copyright to this source code.
 #define ROT32(x, y) ((x << y) | (x >> (32 - y))) // avoid effort
+
+public:
     static uint32_t murmur3_32(const char *key, uint32_t len, uint32_t const seed = 0x5C1DB123)
     {
         static const uint32_t c1 = 0xcc9e2d51;
@@ -106,6 +108,7 @@ private:
     //End of MurmurHash3 Implementation
     //-----------------------------------------------------------------------------
 
+private:
     struct HashTableEntry
     {
         size_t idx;
@@ -126,6 +129,7 @@ private:
     ssize_t                                  _largeValueMemory;
     size_t                                   _numHashes;
     size_t                                   _numGroups;
+    mutable vector<char>                     _hashBuf;
 
 public:
     JoinHashTable(Settings const& settings, ArenaPtr const& arena, size_t numAttributes):
@@ -139,18 +143,18 @@ public:
             _values(_arena, 0),
             _largeValueMemory(0),
             _numHashes(0),
-            _numGroups(0)
+            _numGroups(0),
+            _hashBuf(64)
     {}
 
 public:
-    static uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys)
+    static uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys, vector<char>& buf)
     {
         size_t totalSize = 0;
         for(size_t i =0; i<numKeys; ++i)
         {
             totalSize += keys[i]->size();
         }
-        static std::vector<char> buf (64);
         if(buf.size() < totalSize)
         {
             buf.resize(totalSize);
@@ -162,6 +166,11 @@ public:
             ch += keys[i]->size();
         }
         return murmur3_32(&buf[0], totalSize);
+    }
+
+    uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys) const
+    {
+        return hashKeys(keys, numKeys, _hashBuf);
     }
 
     bool keysLess(Value const* keys1, vector<Value const*> const& keys2) const
