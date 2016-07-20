@@ -134,6 +134,7 @@ private:
     algorithm                     _algorithm;
     bool                          _algorithmSet;
     bool                          _keepDimensions;
+    size_t                        _bloomFilterSize;
     size_t                        _readAheadLimit;
     size_t                        _varSize;
 
@@ -187,16 +188,16 @@ private:
         try
         {
             int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res <= 0)
+            if(res < 0)
             {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "max table size must be positive";
+                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "hash join threshold must be non negative";
             }
-            _hashJoinThreshold = res;
-            _numHashBuckets = chooseNumBuckets(_hashJoinThreshold);
+            _hashJoinThreshold = res * 1024 * 1204;
+            _numHashBuckets = chooseNumBuckets(_hashJoinThreshold / (1024*1024));
         }
         catch (bad_lexical_cast const& exn)
         {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse max table size";
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse hash join threshold";
         }
     }
 
@@ -257,6 +258,23 @@ private:
         }
     }
 
+    void setParamBloomFilterSize(string trimmedContent)
+    {
+        try
+        {
+            int64_t res = lexical_cast<int64_t>(trimmedContent);
+            if(res <= 0)
+            {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "bloom filter size size must be positive";
+            }
+            _bloomFilterSize = res;
+        }
+        catch (bad_lexical_cast const& exn)
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse bloom filter size";
+        }
+    }
+
     void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
     {
         string paramContent = parameterString.substr(header.size());
@@ -273,7 +291,7 @@ private:
     }
 
 public:
-    static size_t const MAX_PARAMETERS = 6;
+    static size_t const MAX_PARAMETERS = 7;
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
@@ -291,7 +309,8 @@ public:
         _numInstances(query->getInstancesCount()),
         _algorithm(HASH_REPLICATE_RIGHT),
         _algorithmSet(false),
-        _keepDimensions(false)
+        _keepDimensions(false),
+        _bloomFilterSize(33554467) //about 4MB, why not?
     {
         string const leftKeysHeader                = "left_ids=";
         string const rightKeysHeader               = "right_ids=";
@@ -299,11 +318,13 @@ public:
         string const chunkSizeHeader               = "chunk_size=";
         string const algorithmHeader               = "algorithm=";
         string const keepDimensionsHeader          = "keep_dimensions=";
+        string const bloomFilterSizeHeader         = "bloom_filter_size=";
         bool leftKeysSet           = false;
         bool rightKeysSet          = false;
         bool hashJoinThresholdSet  = false;
         bool chunkSizeSet          = false;
         bool keepDimensionsSet     = false;
+        bool bloomFilterSizeSet    = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -335,6 +356,10 @@ public:
             else if (starts_with(parameterString, keepDimensionsHeader))
             {
                 setParam(parameterString, keepDimensionsSet, keepDimensionsHeader, &Settings::setParamKeepDimensions);
+            }
+            else if (starts_with(parameterString, bloomFilterSizeHeader))
+            {
+                setParam(parameterString, bloomFilterSizeSet, bloomFilterSizeHeader, &Settings::setParamBloomFilterSize);
             }
             else
             {
@@ -423,6 +448,7 @@ private:
         output<<"buckets "<< _numHashBuckets;
         output<<" chunk "<<_chunkSize;
         output<<" keep_dimensions "<<_keepDimensions;
+        output<<" bloom filter size "<<_bloomFilterSize;
         LOG4CXX_DEBUG(logger, "RJN keys "<<output.str().c_str());
     }
 
@@ -635,6 +661,11 @@ public:
     size_t getHashJoinThreshold() const
     {
         return _hashJoinThreshold;
+    }
+
+    size_t getBloomFilterSize() const
+    {
+        return _bloomFilterSize;
     }
 };
 

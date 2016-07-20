@@ -573,14 +573,13 @@ class BloomFilter
 public:
     static uint32_t const hashSeed1 = 0x5C1DB123;
     static uint32_t const hashSeed2 = 0xACEDBEEF;
-    static size_t const defaultSize = 33554467; //about 4MB, why not?
 
 private:
     BitVector _vec;
     mutable vector<char> _hashBuf;
 
 public:
-    BloomFilter(size_t const bitSize = defaultSize):
+    BloomFilter(size_t const bitSize):
         _vec(bitSize),
         _hashBuf(64)
     {}
@@ -600,10 +599,10 @@ public:
         return _vec.get(hash1) && _vec.get(hash2);
     }
 
-    void addTuple(vector<Value const*> data, size_t const nKeys)
+    void addTuple(vector<Value const*> data, size_t const numKeys)
     {
         size_t totalSize = 0;
-        for(size_t i=0; i<nKeys; ++i)
+        for(size_t i=0; i<numKeys; ++i)
         {
             totalSize+=data[i]->size();
         }
@@ -612,7 +611,7 @@ public:
             _hashBuf.resize(totalSize);
         }
         char* ch = &_hashBuf[0];
-        for(size_t i =0; i<nKeys; ++i)
+        for(size_t i =0; i<numKeys; ++i)
         {
             memcpy(ch, data[i]->data(), data[i]->size());
             ch += data[i]->size();
@@ -620,10 +619,10 @@ public:
         addData(&_hashBuf[0], totalSize);
     }
 
-    bool hasTuple(vector<Value const*> data, size_t const nKeys) const
+    bool hasTuple(vector<Value const*> data, size_t const numKeys) const
     {
         size_t totalSize = 0;
-        for(size_t i=0; i<nKeys; ++i)
+        for(size_t i=0; i<numKeys; ++i)
         {
             totalSize+=data[i]->size();
         }
@@ -632,7 +631,7 @@ public:
             _hashBuf.resize(totalSize);
         }
         char* ch = &_hashBuf[0];
-        for(size_t i =0; i<nKeys; ++i)
+        for(size_t i =0; i<numKeys; ++i)
         {
             memcpy(ch, data[i]->data(), data[i]->size());
             ch += data[i]->size();
@@ -642,30 +641,48 @@ public:
 
     void globalExchange(shared_ptr<Query>& query)
     {
-       size_t const nInstances = query->getInstancesCount();
-       InstanceID myId = query->getInstanceID();
-       std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-       memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
-       for(InstanceID i=0; i<nInstances; i++)
-       {
-           if(i != myId)
+        /*
+         * The bloom filters are sufficiently large (4MB each?), so we use two-phase messaging to save memory in case
+         * there are a lot of instances (i.e. 256). This means two rounds of messaging, a little longer to execute but
+         * we won't see a sudden memory spike (only on one instance, not on every instance).
+         */
+        size_t const nInstances = query->getInstancesCount();
+        InstanceID myId = query->getInstanceID();
+        if(!query->isCoordinator())
+        {
+           InstanceID coordinator = query->getCoordinatorID();
+           shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
+           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           BufSend(coordinator, buf, query);
+           buf = BufReceive(coordinator,query);
+           BitVector incoming(_vec.getBitSize(), buf->getData());
+           _vec = incoming;
+        }
+        else
+        {
+           for(InstanceID i=0; i<nInstances; ++i)
            {
-               BufSend(i, buf, query);
+              if(i != myId)
+              {
+                  shared_ptr<SharedBuffer> inBuf = BufReceive(i,query);
+                  if(inBuf->getSize() != _vec.getByteSize())
+                  {
+                      throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "exchanging unequal bit vectors";
+                  }
+                  BitVector incoming(_vec.getBitSize(), inBuf->getData());
+                  _vec.orIn(incoming);
+              }
            }
-       }
-       for(InstanceID i=0; i<nInstances; i++)
-       {
-           if(i != myId)
+           shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
+           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           for(InstanceID i=0; i<nInstances; ++i)
            {
-               buf = BufReceive(i,query);
-               if(buf->getSize() != _vec.getByteSize())
-               {
-                   throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "exchanging unequal bit vectors";
-               }
-               BitVector incoming(_vec.getBitSize(), buf->getData());
-               _vec.orIn(incoming);
+              if(i != myId)
+              {
+                  BufSend(i, buf, query);
+              }
            }
-       }
+        }
     }
 };
 
@@ -706,10 +723,10 @@ public:
         }
         if(_numJoinedDimensions != 0)
         {
-            _chunkHits = BloomFilter();
+            _chunkHits = BloomFilter(settings.getBloomFilterSize());
         }
         ostringstream message;
-        message<<"RJN chunk filter initialized dimensions "<<_numJoinedDimensions<<", training fields ";
+        message<<"EJ chunk filter initialized dimensions "<<_numJoinedDimensions<<", training fields ";
         for(size_t i=0; i<_numJoinedDimensions; ++i)
         {
             message<<_trainingArrayFields[i]<<" ";
@@ -881,18 +898,18 @@ public:
         }
         if(inputArrays[0]->getSupportedAccess() == Array::SINGLE_PASS)
         {
-            LOG4CXX_DEBUG(logger, "RJN ensuring left random access");
+            LOG4CXX_DEBUG(logger, "EJ ensuring left random access");
             inputArrays[0] = ensureRandomAccess(inputArrays[0], query);
         }
         size_t leftSize = globalFindSizeLowerBound(inputArrays[0], query, settings, settings.getHashJoinThreshold());
-        LOG4CXX_DEBUG(logger, "RJN left size "<<leftSize);
+        LOG4CXX_DEBUG(logger, "EJ left size "<<leftSize);
         if(inputArrays[1]->getSupportedAccess() == Array::SINGLE_PASS)
         {
-            LOG4CXX_DEBUG(logger, "RJN ensuring right random access");
+            LOG4CXX_DEBUG(logger, "EJ ensuring right random access");
             inputArrays[1] = ensureRandomAccess(inputArrays[1], query); //TODO: well, after this nasty thing we can know the exact size
         }
         size_t rightSize = globalFindSizeLowerBound(inputArrays[1], query, settings, settings.getHashJoinThreshold());
-        LOG4CXX_DEBUG(logger, "RJN right size "<<rightSize);
+        LOG4CXX_DEBUG(logger, "EJ right size "<<rightSize);
         if(leftSize < settings.getHashJoinThreshold())
         {
             return Settings::HASH_REPLICATE_LEFT;
@@ -911,13 +928,13 @@ public:
         }
     }
 
-    template <Handedness which>
-    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilter<which>& chunkFilter)
+    template <Handedness which, bool populateChunkFilter, bool preTupled, typename ChunkFilterInstantiation>
+    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilterInstantiation& chunkFilter)
     {
-        size_t const nAttrs = (which == LEFT ?  settings.getNumLeftAttrs() : settings.getNumRightAttrs());
-        size_t const nDims  = (which == LEFT ?  settings.getNumLeftDims()  : settings.getNumRightDims());
+        size_t const nAttrs = array->getArrayDesc().getAttributes(true).size();
+        size_t const nDims  = array->getArrayDesc().getDimensions().size();
         vector<Value const*> tuple ( which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize(), NULL);
-        size_t const nKeys = settings.getNumKeys();
+        size_t const numKeys = settings.getNumKeys();
         vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs);
         vector<shared_ptr<ConstChunkIterator> > citers(nAttrs);
         vector<Value> dimVal(nDims);
@@ -933,43 +950,51 @@ public:
             }
             while(!citers[0]->end())
             {
-                for(size_t i=0; i<nAttrs; ++i)
+                if(!preTupled)
                 {
-                    ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i);
-                    if (idx >= 0)
-                    {
-                        Value const& v = citers[i]->getItem();
-                        tuple[ idx ] = &v;
-                    }
-                }
-                Coordinates const& pos = citers[0]->getPosition();
-                for(size_t i = 0; i<nDims; ++i)
-                {
-                    ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i + nAttrs) : settings.mapRightToTuple(i + nAttrs);
-                    if(idx >= 0)
-                    {
-                        dimVal[i].setInt64(pos[i]);
-                        tuple [ idx ] = &dimVal[i];
-                    }
-                }
-                bool anyNull = false;
-                for(size_t i=0; i<nKeys; ++i)
-                {
-                    if(tuple[i]->isNull())
-                    {
-                        anyNull = true;
-                        break;
-                    }
-                }
-                if(anyNull)
-                {
+                    bool anyNull = false;
                     for(size_t i=0; i<nAttrs; ++i)
                     {
-                        ++(*citers[i]);
+                        ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i);
+                        Value const& v = citers[i]->getItem();
+                        if(idx < (ssize_t) numKeys && v.isNull())
+                        {
+                            anyNull = true;
+                            break;
+                        }
+                        tuple[ idx ] = &v;
                     }
-                    continue;
+                    if(anyNull)
+                    {
+                        for(size_t i=0; i<nAttrs; ++i)
+                        {
+                            ++(*citers[i]);
+                        }
+                        continue;
+                    }
+                    Coordinates const& pos = citers[0]->getPosition();
+                    for(size_t i = 0; i<nDims; ++i)
+                    {
+                        ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i + nAttrs) : settings.mapRightToTuple(i + nAttrs);
+                        if(idx >= 0)
+                        {
+                            dimVal[i].setInt64(pos[i]);
+                            tuple [ idx ] = &dimVal[i];
+                        }
+                    }
                 }
-                chunkFilter.addTuple(tuple);
+                else
+                {   //if pretupled; the last attribute is the hash
+                    for(size_t i=0; i<nAttrs-1; ++i)
+                    {
+                        Value const& v = citers[i]->getItem();
+                        tuple[ i ] = &v;
+                    }
+                }
+                if(populateChunkFilter)
+                {
+                    chunkFilter.addTuple(tuple);
+                }
                 table.insert(tuple);
                 for(size_t i=0; i<nAttrs; ++i)
                 {
@@ -983,17 +1008,17 @@ public:
         }
     }
 
-    template <Handedness which>
-    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings, ChunkFilter<which> const& chunkFilter)
+    template <Handedness which, bool useChunkFilter, bool arrayPreTupled, typename ChunkFilterInstantiation>
+    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings, ChunkFilterInstantiation const& chunkFilter)
     {
         //handedness LEFT means the LEFT array is in table so this reads in reverse
-        size_t const nAttrs = (which == LEFT ?  settings.getNumRightAttrs() : settings.getNumLeftAttrs());
-        size_t const nDims  = (which == LEFT ?  settings.getNumRightDims()  : settings.getNumLeftDims());
+        size_t const nAttrs = array->getArrayDesc().getAttributes(true).size();
+        size_t const nDims  = array->getArrayDesc().getDimensions().size();
         vector<Value const*> tuple ( which == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize(), NULL);
         vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs, NULL);
         vector<shared_ptr<ConstChunkIterator> > citers(nAttrs, NULL);
         vector<Value> dimVal(nDims);
-        size_t const nKeys = settings.getNumKeys();
+        size_t const numKeys = settings.getNumKeys();
         JoinHashTable::const_iterator iter = table.getIterator();
         MemArrayAppender result (settings, query);
         for(size_t i=0; i<nAttrs; ++i)
@@ -1003,7 +1028,7 @@ public:
         while(!aiters[0]->end())
         {
             Coordinates const& chunkPos = aiters[0]->getPosition();
-            if(!chunkFilter.containsChunk(chunkPos))
+            if(useChunkFilter && !chunkFilter.containsChunk(chunkPos))
             {
                 for(size_t i=0; i<nAttrs; ++i)
                 {
@@ -1017,37 +1042,45 @@ public:
             }
             while(!citers[0]->end())
             {
-                bool anyNull = false;
-                for(size_t i=0; i<nAttrs; ++i)
+                if(!arrayPreTupled)
                 {
-                    Value const& v = citers[i]->getItem();
-                    ssize_t idx = which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i);
-                    if (idx >= 0)
+                    bool anyNull = false;
+                    for(size_t i=0; i<nAttrs; ++i)
                     {
-                        if(idx<((ssize_t)nKeys) && v.isNull())
+                        ssize_t idx = which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i);
+                        Value const& v = citers[i]->getItem();
+                        if(idx<((ssize_t)numKeys) && v.isNull())
                         {
                             anyNull = true;
                             break;
                         }
                         tuple[ idx ] = &v;
                     }
-                }
-                if(anyNull)
-                {
-                    for(size_t i=0; i<nAttrs; ++i)
+                    if(anyNull)
                     {
-                        ++(*citers[i]);
+                        for(size_t i=0; i<nAttrs; ++i)
+                        {
+                            ++(*citers[i]);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                Coordinates const& pos = citers[0]->getPosition();
-                for(size_t i =0; i<nDims; ++i)
-                {
-                    ssize_t idx = which == LEFT ? settings.mapRightToTuple(i + nAttrs) : settings.mapLeftToTuple(i + nAttrs);
-                    if(idx >= 0)
+                    Coordinates const& pos = citers[0]->getPosition();
+                    for(size_t i =0; i<nDims; ++i)
                     {
-                        dimVal[i].setInt64(pos[i]);
-                        tuple [ idx ] = &dimVal[i];
+                        ssize_t idx = which == LEFT ? settings.mapRightToTuple(i + nAttrs) : settings.mapLeftToTuple(i + nAttrs);
+                        if(idx >= 0)
+                        {
+                            dimVal[i].setInt64(pos[i]);
+                            tuple [ idx ] = &dimVal[i];
+                        }
+                    }
+                }
+                else
+                {   //if pretupled; the last attribute is the hash
+                    for(size_t i=0; i<nAttrs-1; ++i)
+                    {
+                        Value const& v = citers[i]->getItem();
+                        tuple[i] = &v;
                     }
                 }
                 iter.find(tuple);
@@ -1086,8 +1119,8 @@ public:
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
         ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
-        readIntoTable<which> (redistributed, table, settings, filter);
-        return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter);
+        readIntoTable<which, true, false> (redistributed, table, settings, filter);
+        return arrayToTableJoin<which, true, false>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter);
     }
 
     enum FilteringBehavior
@@ -1138,15 +1171,25 @@ public:
             }
             while(!citers[0]->end())
             {
+                bool anyNull = false;
                 for(size_t i=0; i<nAttrs; ++i)
                 {
                     Value const& v = citers[i]->getItem();
                     ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i);
-                    if (idx >= 0)
+                    if(idx<((ssize_t)numKeys) && v.isNull())
                     {
-                        Value const& v = citers[i]->getItem();
-                        tuple[ idx ] = &v;
+                        anyNull = true;
+                        break;
                     }
+                    tuple[ idx ] = &v;
+                }
+                if(anyNull)
+                {
+                    for(size_t i=0; i<nAttrs; ++i)
+                    {
+                        ++(*citers[i]);
+                    }
+                    continue;
                 }
                 Coordinates const& pos = citers[0]->getPosition();
                 for(size_t i =0; i<nDims; ++i)
@@ -1297,14 +1340,14 @@ public:
     {
         MemArrayAppender output(settings, query, _schema.getName());
         vector<AttributeComparator> const& comparators = settings.getKeyComparators();
-        size_t const nKeys = settings.getNumKeys();
+        size_t const numKeys = settings.getNumKeys();
         SortedTupleCursor leftCursor (leftSorted, query);
         SortedTupleCursor rightCursor(rightSorted, query);
         if(leftCursor.end() || rightCursor.end())
         {
             return output.finalize();
         }
-        vector<Value> previousLeftTuple(nKeys);
+        vector<Value> previousLeftTuple(numKeys);
         Coordinate previousRightIdx = -1;
         vector<Value const*> const* leftTuple = &(leftCursor.getTuple());
         vector<Value const*> const* rightTuple = &(rightCursor.getTuple());
@@ -1336,7 +1379,7 @@ public:
             {
                 break;
             }
-            while (!rightCursor.end() && rightHash == leftHash && keysLess(*rightTuple, *leftTuple, comparators, nKeys) )
+            while (!rightCursor.end() && rightHash == leftHash && keysLess(*rightTuple, *leftTuple, comparators, numKeys) )
             {
                 rightCursor.next();
                 if(!rightCursor.end())
@@ -1360,11 +1403,11 @@ public:
             }
             previousRightIdx = rightCursor.getIdx();
             bool first = true;
-            while(!rightCursor.end() && rightHash == leftHash && keysEqual(*leftTuple, *rightTuple, nKeys))
+            while(!rightCursor.end() && rightHash == leftHash && keysEqual(*leftTuple, *rightTuple, numKeys))
             {
                 if(first)
                 {
-                    for(size_t i=0; i<nKeys; ++i)
+                    for(size_t i=0; i<numKeys; ++i)
                     {
                         previousLeftTuple[i] = *((*leftTuple)[i]);
                     }
@@ -1382,7 +1425,7 @@ public:
             if(!leftCursor.end())
             {
                 leftTuple = &leftCursor.getTuple();
-                if(keysEqual(*leftTuple, previousLeftTuple, nKeys) && !first)
+                if(keysEqual(*leftTuple, previousLeftTuple, numKeys) && !first)
                 {
                     rightCursor.setIdx(previousRightIdx);
                     rightTuple = &rightCursor.getTuple();
@@ -1397,7 +1440,7 @@ public:
     {
         shared_ptr<Array>& first = (which == LEFT ? inputArrays[0] : inputArrays[1]);
         ChunkFilter <which> chunkFilter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
-        BloomFilter bloomFilter;
+        BloomFilter bloomFilter(settings.getBloomFilterSize());
         first = readIntoPreSort<which, GENERATE_FILTER>(first, query, settings, chunkFilter, bloomFilter);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<which>(first, query, settings);
@@ -1409,10 +1452,34 @@ public:
         second = sortArray(second, query, settings);
         second = sortedToPreSg<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        //TODO: if first or second is small - read it into a table at this point
-        first = sortArray(first, query, settings);
-        second= sortArray(second, query, settings);
-        return which == LEFT ? localSortedMergeJoin(first, second, query, settings) :  localSortedMergeJoin(second, first, query, settings);
+        size_t const firstSize  = computeExactArraySize(first, query);
+        size_t const secondSize = computeExactArraySize(first, query);
+        LOG4CXX_DEBUG(logger, "EJ merge after SG first size "<<firstSize<<" second size "<<secondSize);
+        if (firstSize < settings.getHashJoinThreshold())
+        {
+            LOG4CXX_DEBUG(logger, "EJ merge rehashing first");
+            ArenaPtr operatorArena = this->getArena();
+            ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
+            JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
+            readIntoTable<which, false, true> (first, table, settings, chunkFilter);
+            return arrayToTableJoin<which, false, true>( second, table, query, settings, chunkFilter);
+        }
+        else if(secondSize < settings.getHashJoinThreshold())
+        {
+            LOG4CXX_DEBUG(logger, "EJ merge rehashing second");
+            ArenaPtr operatorArena = this->getArena();
+            ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
+            JoinHashTable table(settings, hashArena, which == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize());
+            readIntoTable<(which == LEFT ? RIGHT : LEFT), false, true> (second, table, settings, chunkFilter);
+            return arrayToTableJoin<(which == LEFT ? RIGHT : LEFT), false, true>( first, table, query, settings, chunkFilter);
+        }
+        else
+        {
+            LOG4CXX_DEBUG(logger, "EJ merge sorted");
+            first = sortArray(first, query, settings);
+            second= sortArray(second, query, settings);
+            return which == LEFT ? localSortedMergeJoin(first, second, query, settings) :  localSortedMergeJoin(second, first, query, settings);
+        }
     }
 
     shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
@@ -1424,22 +1491,22 @@ public:
         Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
         if(algo == Settings::HASH_REPLICATE_LEFT)
         {
-            LOG4CXX_DEBUG(logger, "RJN running hash_replicate_left");
+            LOG4CXX_DEBUG(logger, "EJ running hash_replicate_left");
             return replicationHashJoin<LEFT>(inputArrays, query, settings);
         }
         else if (algo == Settings::HASH_REPLICATE_RIGHT)
         {
-            LOG4CXX_DEBUG(logger, "RJN running hash_replicate_right");
+            LOG4CXX_DEBUG(logger, "EJ running hash_replicate_right");
             return replicationHashJoin<RIGHT>(inputArrays, query, settings);
         }
         else if (algo == Settings::MERGE_LEFT_FIRST)
         {
-            LOG4CXX_DEBUG(logger, "RJN running merge_left_first");
+            LOG4CXX_DEBUG(logger, "EJ running merge_left_first");
             return mergeJoin<LEFT>(inputArrays, query, settings);
         }
         else
         {
-            LOG4CXX_DEBUG(logger, "RJN running merge_right_first");
+            LOG4CXX_DEBUG(logger, "EJ running merge_right_first");
             return mergeJoin<RIGHT>(inputArrays, query, settings);
         }
     }
