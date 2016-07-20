@@ -32,12 +32,12 @@ CCFLAGS = -pedantic -W -Wextra -Wall -Wno-variadic-macros -Wno-strict-aliasing \
 INC = -I. -DPROJECT_ROOT="\"$(SCIDB)\"" -I"$(SCIDB_THIRDPARTY_PREFIX)/3rdparty/boost/include/" \
       -I"$(SCIDB)/include" -I./extern
 
-LIBS = -shared -Wl,-soname,librjoin.so -ldl -L. \
+LIBS = -shared -Wl,-soname,libequi_join.so -ldl -L. \
        -L"$(SCIDB_THIRDPARTY_PREFIX)/3rdparty/boost/lib" -L"$(SCIDB)/lib" \
        -Wl,-rpath,$(SCIDB)/lib:$(RPATH)
 
-SRCS = LogicalRJoin.cpp \
-       PhysicalRJoin.cpp
+SRCS = LogicalEquiJoin.cpp \
+       PhysicalEquiJoin.cpp
 
 # Compiler settings for SciDB version >= 15.7
 ifneq ("$(wildcard /usr/bin/g++-4.9)","")
@@ -52,17 +52,17 @@ else
  endif
 endif
 
-all: librjoin.so
+all: libequi_join.so
 
 clean:
 	rm -rf *.so *.o
 
-librjoin.so: $(SRCS) RJoinSettings.h JoinHashTable.h 
+libequi_join.so: $(SRCS) EquiJoinSettings.h JoinHashTable.h 
 	@if test ! -d "$(SCIDB)"; then echo  "Error. Try:\n\nmake SCIDB=<PATH TO SCIDB INSTALL PATH>"; exit 1; fi
-	$(CXX) $(CCFLAGS) $(INC) -o LogicalRJoin.o -c LogicalRJoin.cpp
-	$(CXX) $(CCFLAGS) $(INC) -o PhysicalRJoin.o -c PhysicalRJoin.cpp
-	$(CXX) $(CCFLAGS) $(INC) -o librjoin.so plugin.cpp LogicalRJoin.o PhysicalRJoin.o $(LIBS)
-	@echo "Now copy librjoin.so to $(INSTALL_DIR) on all your SciDB nodes, and restart SciDB."
+	$(CXX) $(CCFLAGS) $(INC) -o LogicalEquiJoin.o -c LogicalEquiJoin.cpp
+	$(CXX) $(CCFLAGS) $(INC) -o PhysicalEquiJoin.o -c PhysicalEquiJoin.cpp
+	$(CXX) $(CCFLAGS) $(INC) -o libequi_join.so plugin.cpp LogicalEquiJoin.o PhysicalEquiJoin.o $(LIBS)
+	@echo "Now copy libequi_join.so to $(INSTALL_DIR) on all your SciDB nodes, and restart SciDB."
 
 test:
 	./test.sh

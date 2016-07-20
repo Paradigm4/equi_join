@@ -20,21 +20,21 @@ $ iquery -aq "store(apply(build(<c:string>[j=1:5,3,0], '[(def),(mno),(pqr),(def)
 {4} 'def',4
 
 #Join the arrays on attribute 0 (string,i.e. left.a=right.c). This is difficult right now otherwise:
-$ iquery -aq "rjoin(left, right, 'left_ids=0', 'right_ids=0')"
+$ iquery -aq "equi_join(left, right, 'left_ids=0', 'right_ids=0')"
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,1
 {0,1} 'def',1.1,4
 {2,0} 'mno',4.4,2
 
 #Join on two keys: left.i = right.d (note: dimension to attribute) and left.a=right.c
-$ iquery -aq "rjoin(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
+$ iquery -aq "equi_join(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
 {instance_id,value_no} i,a,b
 {0,0} 1,'def',1.1
 ```
 
 ## Usage
 ```
-rjoin(left_array, right_array, [, 'setting=value` [,...]])
+equi_join(left_array, right_array, [, 'setting=value` [,...]])
 ```
 Where:
 * left and right array could be any SciDB arrays or operator outputs

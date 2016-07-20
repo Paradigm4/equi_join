@@ -5,26 +5,26 @@
 * Copyright (C) 2008-2016 SciDB, Inc.
 * All Rights Reserved.
 *
-* rjoin is a plugin for SciDB, an Open Source Array DBMS maintained
+* equi_join is a plugin for SciDB, an Open Source Array DBMS maintained
 * by Paradigm4. See http://www.paradigm4.com/
 *
-* rjoin is free software: you can redistribute it and/or modify
+* equi_join is free software: you can redistribute it and/or modify
 * it under the terms of the AFFERO GNU General Public License as published by
 * the Free Software Foundation.
 *
-* rjoin is distributed "AS-IS" AND WITHOUT ANY WARRANTY OF ANY KIND,
+* equi_join is distributed "AS-IS" AND WITHOUT ANY WARRANTY OF ANY KIND,
 * INCLUDING ANY IMPLIED WARRANTY OF MERCHANTABILITY,
 * NON-INFRINGEMENT, OR FITNESS FOR A PARTICULAR PURPOSE. See
 * the AFFERO GNU General Public License for the complete license terms.
 *
 * You should have received a copy of the AFFERO GNU General Public License
-* along with rjoin.  If not, see <http://www.gnu.org/licenses/agpl-3.0.html>
+* along with equi_join.  If not, see <http://www.gnu.org/licenses/agpl-3.0.html>
 *
 * END_COPYRIGHT
 */
 
-#ifndef RJOIN_SETTINGS
-#define RJOIN_SETTINGS
+#ifndef EQUI_JOIN_SETTINGS
+#define EQUI_JOIN_SETTINGS
 
 #include <query/Operator.h>
 #include <query/AttributeComparator.h>
@@ -33,7 +33,7 @@
 
 namespace scidb
 {
-namespace rjoin
+namespace equi_join
 {
 
 using std::string;
@@ -48,7 +48,7 @@ using boost::lexical_cast;
 using boost::bad_lexical_cast;
 
 // Logger for operator. static to prevent visibility of variable outside of file
-static log4cxx::LoggerPtr logger(log4cxx::Logger::getLogger("scidb.operators.rjoin"));
+static log4cxx::LoggerPtr logger(log4cxx::Logger::getLogger("scidb.operators.equi_join"));
 
 /**
  * Table sizing considerations:
@@ -307,7 +307,7 @@ public:
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "illegal number of parameters passed to rjoin";
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "illegal number of parameters passed to equi_join";
         }
         for (size_t i= 0; i<nParams; ++i)
         {
@@ -578,7 +578,7 @@ public:
         Dimensions outputDimensions;
         outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
         outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc(name.size() == 0 ? "rjoin" : name, outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
+        return ArrayDesc(name.size() == 0 ? "equi_join" : name, outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
     }
 
     template <Handedness which>
@@ -614,7 +614,7 @@ public:
         outputDimensions.push_back(DimensionDesc("dst_instance_id", 0, _numInstances-1,             1,         0));
         outputDimensions.push_back(DimensionDesc("src_instance_id", 0, _numInstances-1,             1,         0));
         outputDimensions.push_back(DimensionDesc("value_no",        0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc("rjoin_state" , outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
+        return ArrayDesc("equi_join_state" , outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
     }
 
     vector <AttributeComparator> const& getKeyComparators() const
@@ -640,5 +640,5 @@ public:
 
 } } //namespaces
 
-#endif //RJOIN_SETTINGS
+#endif //EQUI_JOIN_SETTINGS
 

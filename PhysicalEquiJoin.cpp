@@ -5,20 +5,20 @@
 * Copyright (C) 2008-2016 SciDB, Inc.
 * All Rights Reserved.
 *
-* rjoin is a plugin for SciDB, an Open Source Array DBMS maintained
+* equi_join is a plugin for SciDB, an Open Source Array DBMS maintained
 * by Paradigm4. See http://www.paradigm4.com/
 *
-* rjoin is free software: you can redistribute it and/or modify
+* equi_join is free software: you can redistribute it and/or modify
 * it under the terms of the AFFERO GNU General Public License as published by
 * the Free Software Foundation.
 *
-* rjoin is distributed "AS-IS" AND WITHOUT ANY WARRANTY OF ANY KIND,
+* equi_join is distributed "AS-IS" AND WITHOUT ANY WARRANTY OF ANY KIND,
 * INCLUDING ANY IMPLIED WARRANTY OF MERCHANTABILITY,
 * NON-INFRINGEMENT, OR FITNESS FOR A PARTICULAR PURPOSE. See
 * the AFFERO GNU General Public License for the complete license terms.
 *
 * You should have received a copy of the AFFERO GNU General Public License
-* along with rjoin.  If not, see <http://www.gnu.org/licenses/agpl-3.0.html>
+* along with equi_join.  If not, see <http://www.gnu.org/licenses/agpl-3.0.html>
 *
 * END_COPYRIGHT
 */
@@ -34,9 +34,9 @@ namespace scidb
 {
 
 using namespace std;
-using namespace rjoin;
+using namespace equi_join;
 
-namespace rjoin
+namespace equi_join
 {
 
 class MemArrayAppender : public boost::noncopyable
@@ -753,14 +753,12 @@ public:
     }
 };
 
+} //namespace equi_join
 
-
-} //namespace rjoin
-
-class PhysicalRJoin : public PhysicalOperator
+class PhysicalEquiJoin : public PhysicalOperator
 {
 public:
-    PhysicalRJoin(string const& logicalName,
+    PhysicalEquiJoin(string const& logicalName,
                              string const& physicalName,
                              Parameters const& parameters,
                              ArrayDesc const& schema):
@@ -1396,5 +1394,5 @@ public:
     }
 };
 
-REGISTER_PHYSICAL_OPERATOR_FACTORY(PhysicalRJoin, "rjoin", "physical_rjoin");
+REGISTER_PHYSICAL_OPERATOR_FACTORY(PhysicalEquiJoin, "equi_join", "physical_equi_join");
 } //namespace scidb
