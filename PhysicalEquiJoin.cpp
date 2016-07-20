@@ -578,23 +578,23 @@ private:
     mutable vector<char> _hashBuf;
 
 public:
-    BloomFilter(size_t const size = defaultSize):
-        _vec(size),
+    BloomFilter(size_t const bitSize = defaultSize):
+        _vec(bitSize),
         _hashBuf(64)
     {}
 
-    void addData( char const* data, size_t const dataSize )
+    void addData(void const* data, size_t const dataSize )
     {
-        uint32_t hash1 = JoinHashTable::murmur3_32(data, dataSize, hashSeed1) % _vec.getBitSize();
-        uint32_t hash2 = JoinHashTable::murmur3_32(data, dataSize, hashSeed2) % _vec.getBitSize();
+        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed1) % _vec.getBitSize();
+        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed2) % _vec.getBitSize();
         _vec.set(hash1);
         _vec.set(hash2);
     }
 
-    bool hasData(char const* data, size_t const dataSize ) const
+    bool hasData(void const* data, size_t const dataSize ) const
     {
-        uint32_t hash1 = JoinHashTable::murmur3_32(data, dataSize, hashSeed1) % _vec.getBitSize();
-        uint32_t hash2 = JoinHashTable::murmur3_32(data, dataSize, hashSeed2) % _vec.getBitSize();
+        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed1) % _vec.getBitSize();
+        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed2) % _vec.getBitSize();
         return _vec.get(hash1) && _vec.get(hash2);
     }
 
@@ -667,8 +667,6 @@ public:
     }
 };
 
-
-
 template <Handedness which>
 class ChunkFilter
 {
@@ -678,7 +676,7 @@ private:
     vector<size_t>     _filterArrayDimensions;  //index into the filtered array dimensions
     vector<Coordinate> _filterArrayOrigins;
     vector<Coordinate> _filterChunkSizes;
-    set<Coordinates> _chunkHits;
+    BloomFilter        _chunkHits;
 
 public:
     ChunkFilter(Settings const& settings, ArrayDesc const& leftSchema, ArrayDesc const& rightSchema):
@@ -734,7 +732,7 @@ public:
         {
             input[i] = ((tuple[_trainingArrayFields[i]]->getInt64() - _filterArrayOrigins[i]) / _filterChunkSizes[i]) * _filterChunkSizes[i] + _filterArrayOrigins[i];
         }
-        _chunkHits.insert(input);
+        _chunkHits.addData(&(input[0]), _numJoinedDimensions*sizeof(Coordinate));
     }
 
     bool containsChunk(Coordinates const& inputChunkPos) const
@@ -748,7 +746,7 @@ public:
         {
             input[i] = inputChunkPos[_filterArrayDimensions[i]];
         }
-        bool result = _chunkHits.count(input);
+        bool result = _chunkHits.hasData(&input[0], _numJoinedDimensions*sizeof(Coordinate));
         return result;
     }
 };
@@ -1063,12 +1061,12 @@ public:
     template <Handedness which>
     shared_ptr<Array> replicationHashJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
-        ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
         shared_ptr<Array> redistributed = (which == LEFT ? inputArrays[0] : inputArrays[1]);
         redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query);
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
+        ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
         readIntoTable<which> (redistributed, table, settings, filter);
         return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter);
     }
