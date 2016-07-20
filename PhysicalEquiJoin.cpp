@@ -500,18 +500,18 @@ public:
 class BitVector
 {
 private:
-    size_t const _size;
+    size_t _size;
     vector<char> _data;
 
 public:
     BitVector (size_t const bitSize):
         _size(bitSize),
-        _data( _size+7 / 8, 0)
+        _data( (_size+7) / 8, 0)
     {}
 
     BitVector(size_t const bitSize, void const* data):
         _size(bitSize),
-        _data( _size+7 / 8, 0)
+        _data( (_size+7) / 8, 0)
     {
         memcpy(&(_data[0]), data, _data.size());
     }
@@ -563,17 +563,19 @@ public:
         }
         for(size_t i =0; i<_data.size(); ++i)
         {
-            _data[i] != other._data[i];
+            _data[i] |= other._data[i];
         }
     }
 };
 
 class BloomFilter
 {
-private:
+public:
     static uint32_t const hashSeed1 = 0x5C1DB123;
     static uint32_t const hashSeed2 = 0xACEDBEEF;
     static size_t const defaultSize = 33554467; //about 4MB, why not?
+
+private:
     BitVector _vec;
     mutable vector<char> _hashBuf;
 
@@ -667,6 +669,10 @@ public:
     }
 };
 
+/**
+ * First add in tuples from one of the arrays and then filter chunk positions from the other arrays.
+ * The *which* template corresponds to the generator / training array
+ */
 template <Handedness which>
 class ChunkFilter
 {
@@ -680,7 +686,8 @@ private:
 
 public:
     ChunkFilter(Settings const& settings, ArrayDesc const& leftSchema, ArrayDesc const& rightSchema):
-        _numJoinedDimensions(0)
+        _numJoinedDimensions(0),
+        _chunkHits(0) //reallocated if actually needed below
     {
         size_t const numFilterAtts = which == LEFT ? settings.getNumRightAttrs() : settings.getNumLeftAttrs();
         size_t const numFilterDims = which == LEFT ? settings.getNumRightDims() : settings.getNumLeftDims();
@@ -696,6 +703,10 @@ public:
                 _filterArrayOrigins.push_back(dimension.getStartMin());
                 _filterChunkSizes.push_back(dimension.getChunkInterval());
             }
+        }
+        if(_numJoinedDimensions != 0)
+        {
+            _chunkHits = BloomFilter();
         }
         ostringstream message;
         message<<"RJN chunk filter initialized dimensions "<<_numJoinedDimensions<<", training fields ";
@@ -721,7 +732,7 @@ public:
         LOG4CXX_DEBUG(logger, message.str());
     }
 
-    void addTrainingTuple(vector<Value const*> const& tuple)
+    void addTuple(vector<Value const*> const& tuple)
     {
         if(_numJoinedDimensions==0)
         {
@@ -748,6 +759,14 @@ public:
         }
         bool result = _chunkHits.hasData(&input[0], _numJoinedDimensions*sizeof(Coordinate));
         return result;
+    }
+
+    void globalExchange(shared_ptr<Query>& query)
+    {
+        if(_numJoinedDimensions!=0)
+        {
+            _chunkHits.globalExchange(query);
+        }
     }
 };
 
@@ -950,7 +969,7 @@ public:
                     }
                     continue;
                 }
-                chunkFilter.addTrainingTuple(tuple);
+                chunkFilter.addTuple(tuple);
                 table.insert(tuple);
                 for(size_t i=0; i<nAttrs; ++i)
                 {
@@ -1071,8 +1090,15 @@ public:
         return arrayToTableJoin<which>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter);
     }
 
-    template <Handedness which>
-    shared_ptr<Array> readIntoPreSort(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
+    enum FilteringBehavior
+    {
+        GENERATE_FILTER,
+        REDUCE_WITH_FILTER
+    };
+
+    template <Handedness which, FilteringBehavior filtering, typename ChunkFilterInstantiation>
+    shared_ptr<Array> readIntoPreSort(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings,
+                                      ChunkFilterInstantiation& chunkFilter, BloomFilter& bloomFilter)
     {
         ArrayDesc schema = settings.getPreSgSchema <which> (query);
         PreSortWriter writer(schema, query);
@@ -1094,6 +1120,18 @@ public:
         }
         while(!aiters[0]->end())
         {
+            if(filtering == REDUCE_WITH_FILTER)
+            {
+                Coordinates const& chunkPos = aiters[0]->getPosition();
+                if(!chunkFilter.containsChunk(chunkPos))
+                {
+                    for(size_t i=0; i<nAttrs; ++i)
+                    {
+                        ++(*aiters[i]);
+                    }
+                    continue;
+                }
+            }
             for(size_t i=0; i<nAttrs; ++i)
             {
                 citers[i] = aiters[i]->getChunk().getConstIterator();
@@ -1119,6 +1157,19 @@ public:
                         dimVal[i].setInt64(pos[i]);
                         tuple [ idx ] = &dimVal[i];
                     }
+                }
+                if(filtering == GENERATE_FILTER)
+                {
+                    chunkFilter.addTuple(tuple);
+                    bloomFilter.addTuple(tuple, numKeys);
+                }
+                else if( !bloomFilter.hasTuple(tuple, numKeys))
+                {
+                    for(size_t i=0; i<nAttrs; ++i)
+                    {
+                        ++(*citers[i]);
+                    }
+                    continue;
                 }
                 hashVal.setUint32(JoinHashTable::hashKeys(tuple, numKeys, hashBuf) % hashMod);
                 writer.writeTuple(tuple);
@@ -1345,17 +1396,19 @@ public:
     shared_ptr<Array> mergeJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
         shared_ptr<Array>& first = (which == LEFT ? inputArrays[0] : inputArrays[1]);
-        first = readIntoPreSort<which>(first, query, settings);
+        ChunkFilter <which> chunkFilter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
+        BloomFilter bloomFilter;
+        first = readIntoPreSort<which, GENERATE_FILTER>(first, query, settings, chunkFilter, bloomFilter);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<which>(first, query, settings);
         first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        //        size_t localFirstSize = computeExactArraySize(left, query);
+        chunkFilter.globalExchange(query);
+        bloomFilter.globalExchange(query);
         shared_ptr<Array>& second = (which == LEFT ? inputArrays[1] : inputArrays[0]);
-        second = readIntoPreSort<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
+        second = readIntoPreSort<(which == LEFT ? RIGHT : LEFT), REDUCE_WITH_FILTER>(second, query, settings, chunkFilter, bloomFilter);
         second = sortArray(second, query, settings);
         second = sortedToPreSg<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        //        size_t localSecondSize = computeExactArraySize(second, query);
         //TODO: if first or second is small - read it into a table at this point
         first = sortArray(first, query, settings);
         second= sortArray(second, query, settings);
