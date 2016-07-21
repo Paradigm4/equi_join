@@ -32,7 +32,7 @@ $ iquery -aq "equi_join(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
 {0,0} 1,'def',1.1
 ```
 
-Here's a comparison to the existing `cross_join` operator:
+## Compared to the Existing cross_join
 ```
 #Make a large 2D dense arrary:
 $ iquery -anq "store(build(<a:double> [x=1:10000,1000,0, y=1:10000,1000,0], random()), twod)"
