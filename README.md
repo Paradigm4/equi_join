@@ -1,5 +1,5 @@
 # equi_join [Under Construction]
-Relational-style Join of SciDB Arrays by Attributes. Work in progress.
+Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. Work in progress.
 
 ## Examples
 ```
