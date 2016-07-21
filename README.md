@@ -1,5 +1,5 @@
 # equi_join [Under Construction]
-Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. Work in progress.
+Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. The objective of the operator is to make joining of various diverse datasets easier and more performant. Traditionally, DBMS engines use the optimizer to estimate the sizes of joined structures and choose an algorithm; SciDB aims to get there in the future. For now, this algorithm uses adaptive heurisitics instead. It examines the inputs, using some pre-scanning if needed, and picks a reasonably good code path.
 
 ## Examples
 ```
@@ -126,6 +126,8 @@ If it is determined (or user-dictated) that one of the arrays is small enough to
 If both arrays are sufficiently large, the smaller array's join keys are hashed and the hash is used to redistribute it such that each instance gets roughly an equal portion. Concurrently, a filter over chunk positions and a bloom filter over the join keys are built. The filters are copied to every instance. The other array is then read, through the filters, and redistributed along the same hash, ensuring co-location. Now that both arrays are redistributed and their exact sizes are known, the algorithm may decide to read one into a hash table (if small enough) or sort both and join via a merge of sorted arrays.
 
 ## Future work
+ * lots of code cleanup
  * pick join-on keys automatically by checking for matching names, if not supplied
  * add outer joins
  * consider merging in the cross product use case
+ * better tuning for the Bloom Filter: choosing size and number of hash functions based on available memory
