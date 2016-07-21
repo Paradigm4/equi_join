@@ -54,6 +54,10 @@ private:
     vector<shared_ptr<ArrayIterator> >_arrayIterators;
     vector<shared_ptr<ChunkIterator> >_chunkIterators;
     Value _boolTrue;
+    shared_ptr<Expression> _filterExpression;
+    vector<BindInfo> _filterBindings;
+    size_t _numBindings;
+    shared_ptr<ExpressionContext> _filterContext;
 
 public:
     MemArrayAppender(Settings const& settings, shared_ptr<Query> const& query, string const name = ""):
@@ -67,7 +71,8 @@ public:
         _settings(settings),
         _outputPosition(2 , 0),
         _arrayIterators(_numAttributes+1, NULL),
-        _chunkIterators(_numAttributes+1, NULL)
+        _chunkIterators(_numAttributes+1, NULL),
+        _filterExpression(settings.getFilterExpression())
     {
         _outputPosition[0] = _myInstanceId;
         _outputPosition[1] = 0;
@@ -76,11 +81,49 @@ public:
             _arrayIterators[i] = _output->getIterator(i);
         }
         _boolTrue.setBool(true);
+        if(_filterExpression.get())
+        {
+            _filterBindings = _filterExpression->getBindings();
+            _numBindings = _filterBindings.size();
+            _filterContext.reset(new ExpressionContext(*_filterExpression));
+            for(size_t i =0; i<_filterBindings.size(); ++i)
+            {
+                BindInfo const& binding = _filterBindings[i];
+                if(binding.kind == BindInfo::BI_VALUE)
+                {
+                    (*_filterContext)[i] = binding.value;
+                }
+            }
+        }
     }
 
 public:
     void writeTuple(vector<Value const*> const& left, Value const* right)
     {
+        if(_filterExpression.get())
+        {
+            for(size_t i=0; i<_numBindings; ++i)
+            {
+                BindInfo const& binding = _filterBindings[i];
+                if(binding.kind == BindInfo::BI_ATTRIBUTE)
+                {
+                    size_t index = _filterBindings[i].resolvedId;
+                    if(index<_leftTupleSize)
+                    {
+                        (*_filterContext)[i] = *(left[index]);
+                    }
+                    else
+                    {
+                        (*_filterContext)[i] = *(right + index - _leftTupleSize + _numKeys);
+                    }
+                }
+            }
+            bool pass = _filterExpression->evaluate(*_filterContext).getBool();
+            if(!pass)
+            {
+                return;
+            }
+        }
         if( _outputPosition[1] % _chunkSize == 0)
         {
             for(size_t i=0; i<_numAttributes+1; ++i)
@@ -112,6 +155,30 @@ public:
 
     void writeTuple(Value const* left, vector<Value const*> const& right)
     {
+        if(_filterExpression.get())
+        {
+            for(size_t i=0; i<_numBindings; ++i)
+            {
+                BindInfo const& binding = _filterBindings[i];
+                if(binding.kind == BindInfo::BI_ATTRIBUTE)
+                {
+                    size_t index = _filterBindings[i].resolvedId;
+                    if(index<_leftTupleSize)
+                    {
+                        (*_filterContext)[i] = (left[index]);
+                    }
+                    else
+                    {
+                        (*_filterContext)[i] = *(right[index - _leftTupleSize + _numKeys]);
+                    }
+                }
+            }
+            bool pass = _filterExpression->evaluate(*_filterContext).getBool();
+            if(!pass)
+            {
+                return;
+            }
+        }
         if( _outputPosition[1] % _chunkSize == 0)
         {
             for(size_t i=0; i<_numAttributes+1; ++i)
@@ -142,6 +209,30 @@ public:
 
     void writeTuple(vector<Value const*> const& left, vector<Value const*> const& right)
     {
+        if(_filterExpression.get())
+        {
+            for(size_t i=0; i<_numBindings; ++i)
+            {
+                BindInfo const& binding = _filterBindings[i];
+                if(binding.kind == BindInfo::BI_ATTRIBUTE)
+                {
+                    size_t index = _filterBindings[i].resolvedId;
+                    if(index<_leftTupleSize)
+                    {
+                        (*_filterContext)[i] = *(left[index]);
+                    }
+                    else
+                    {
+                        (*_filterContext)[i] = *(right[index - _leftTupleSize + _numKeys]);
+                    }
+                }
+            }
+            bool pass = _filterExpression->evaluate(*_filterContext).getBool();
+            if(!pass)
+            {
+                return;
+            }
+        }
         if( _outputPosition[1] % _chunkSize == 0)
         {
             for(size_t i=0; i<_numAttributes+1; ++i)

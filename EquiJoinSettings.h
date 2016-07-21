@@ -27,12 +27,16 @@
 #define EQUI_JOIN_SETTINGS
 
 #include <query/Operator.h>
+#include <query/Expression.h>
 #include <query/AttributeComparator.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
 
 namespace scidb
 {
+
+std::shared_ptr<LogicalExpression>    parseExpression(const std::string&);
+
 namespace equi_join
 {
 
@@ -137,6 +141,8 @@ private:
     size_t                        _bloomFilterSize;
     size_t                        _readAheadLimit;
     size_t                        _varSize;
+    string                        _filterExpressionString;
+    shared_ptr<Expression>        _filterExpression;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
@@ -275,6 +281,11 @@ private:
         }
     }
 
+    void setParamFilterExpression(string trimmedContent)
+    {
+        _filterExpressionString = trimmedContent;
+    }
+
     void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
     {
         string paramContent = parameterString.substr(header.size());
@@ -291,7 +302,7 @@ private:
     }
 
 public:
-    static size_t const MAX_PARAMETERS = 7;
+    static size_t const MAX_PARAMETERS = 8;
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
@@ -310,7 +321,9 @@ public:
         _algorithm(HASH_REPLICATE_RIGHT),
         _algorithmSet(false),
         _keepDimensions(false),
-        _bloomFilterSize(33554467) //about 4MB, why not?
+        _bloomFilterSize(33554467), //about 4MB, why not?
+        _filterExpressionString(""),
+        _filterExpression(NULL)
     {
         string const leftKeysHeader                = "left_ids=";
         string const rightKeysHeader               = "right_ids=";
@@ -319,12 +332,14 @@ public:
         string const algorithmHeader               = "algorithm=";
         string const keepDimensionsHeader          = "keep_dimensions=";
         string const bloomFilterSizeHeader         = "bloom_filter_size=";
+        string const filterExpressionHeader        = "filter:";
         bool leftKeysSet           = false;
         bool rightKeysSet          = false;
         bool hashJoinThresholdSet  = false;
         bool chunkSizeSet          = false;
         bool keepDimensionsSet     = false;
         bool bloomFilterSizeSet    = false;
+        bool filterExpressionSet   = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -361,6 +376,10 @@ public:
             {
                 setParam(parameterString, bloomFilterSizeSet, bloomFilterSizeHeader, &Settings::setParamBloomFilterSize);
             }
+            else if (starts_with(parameterString, filterExpressionHeader))
+            {
+                setParam(parameterString, filterExpressionSet, filterExpressionHeader, &Settings::setParamFilterExpression);
+            }
             else
             {
                 ostringstream error;
@@ -370,6 +389,10 @@ public:
         }
         verifyInputs();
         mapAttributes();
+        if(filterExpressionSet)
+        {
+            compileExpression(query);
+        }
         logSettings();
     }
 
@@ -438,6 +461,17 @@ private:
         _rightTupleSize = j;
     }
 
+    void compileExpression(shared_ptr<Query>& query)
+    {
+        shared_ptr<LogicalExpression> logicalExpr = parseExpression(_filterExpressionString);
+        ArrayDesc inputDesc = getOutputSchema(query);
+        vector<ArrayDesc> inputDescs;
+        inputDescs.push_back(inputDesc);
+        ArrayDesc outputDesc = getOutputSchema(query);
+        _filterExpression.reset(new Expression());
+        _filterExpression->compile(logicalExpr, query, false, TID_BOOL, inputDescs, outputDesc);
+    }
+
     void logSettings()
     {
         ostringstream output;
@@ -449,6 +483,7 @@ private:
         output<<" chunk "<<_chunkSize;
         output<<" keep_dimensions "<<_keepDimensions;
         output<<" bloom filter size "<<_bloomFilterSize;
+        output<<" expression "<<_filterExpressionString;
         LOG4CXX_DEBUG(logger, "RJN keys "<<output.str().c_str());
     }
 
@@ -666,6 +701,11 @@ public:
     size_t getBloomFilterSize() const
     {
         return _bloomFilterSize;
+    }
+
+    shared_ptr<Expression> const& getFilterExpression() const
+    {
+        return _filterExpression;
     }
 };
 

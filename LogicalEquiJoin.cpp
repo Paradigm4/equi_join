@@ -50,7 +50,6 @@ public:
         res.push_back(END_OF_VARIES_PARAMS());
         if (_parameters.size() < Settings::MAX_PARAMETERS)
         {
-            res.push_back(PARAM_INPUT());
             res.push_back(PARAM_CONSTANT("string"));
         }
         return res;
