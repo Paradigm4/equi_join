@@ -54,7 +54,7 @@ real	0m0.315s
 user	0m0.008s
 sys	0m0.000s
 ```
-Internally the operator detects that the join is on dimensions and uses a chunk filter structure to prevent irrelevant chunks from being scanned. The goal is to make many (if not all) uses of `cross_join` obsolete. The regular `join` on dimensions still reigns supreme.
+Here, `equi_join` detects that the join is on dimensions and uses a chunk filter structure to prevent irrelevant chunks from being scanned. The above is a lucky case for `cross_join` - as the number of attributes increases, the advantage of `equi_join` gets bigger. If the join is on attributes, `cross_join` definitely cannot keep up. Moreover `cross_join` always replicates the right array, no matter how large, to every instance; this is often disastrous. `equi_join` has a much more involved heuristic based on estimated input sizes.  The goal is to make many (if not all) uses of `cross_join` obsolete. The regular `join` on dimensions still reigns supreme.
 
 ## Usage
 ```
@@ -111,5 +111,6 @@ If both arrays are sufficiently large, the smaller array's join keys are hashed 
 ## Still needs some work
  * pick join-on keys automatically by checking for matching names, if not supplied
  * add outer joins
+ * consider the cross product case
 
 ... something like that
