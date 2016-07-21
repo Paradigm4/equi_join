@@ -291,9 +291,9 @@ private:
         string paramContent = parameterString.substr(header.size());
         if (alreadySet)
         {
-            string header = parameterString.substr(0, header.size()-1);
+            string h = parameterString.substr(0, header.size()-1);
             ostringstream error;
-            error<<"illegal attempt to set "<<header<<" multiple times";
+            error<<"illegal attempt to set "<<h<<" multiple times";
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
         }
         trim(paramContent);

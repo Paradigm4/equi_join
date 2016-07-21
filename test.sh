@@ -108,5 +108,21 @@ iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm
 iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=TRUE',  'hash_join_threshold=0'     ), d,c,a,b)" >> $OUTFILE 2>&1
 iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=TRUE',  'hash_join_threshold=0'     ), d,c,a,b)" >> $OUTFILE 2>&1
 
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 7" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c'                                                                                         )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=hash_replicate_left'                                                        )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=hash_replicate_right'                                                       )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_left_first'                                                           )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_right_first'                                                          )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_left_first',     'hash_join_threshold=0'                              )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_right_first',    'hash_join_threshold=0'                              )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=hash_replicate_left', 'keep_dimensions=1'                          )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=hash_replicate_right','keep_dimensions=1'                          )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'keep_dimensions=1'                          )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'keep_dimensions=1'                          )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'hash_join_threshold=0', 'keep_dimensions=1' )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'hash_join_threshold=0', 'keep_dimensions=1' )" >> $OUTFILE 2>&1
+
 diff test.out test.expected
 
