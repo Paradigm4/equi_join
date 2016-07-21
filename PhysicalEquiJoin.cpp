@@ -93,6 +93,10 @@ public:
                 {
                     (*_filterContext)[i] = binding.value;
                 }
+                else if(binding.kind == BindInfo::BI_COORDINATE)
+                {
+                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "filtering on dimensions not supported";
+                }
             }
         }
     }
@@ -100,6 +104,7 @@ public:
 public:
     void writeTuple(vector<Value const*> const& left, Value const* right)
     {
+        LOG4CXX_DEBUG(logger, "WRITE 1");
         if(_filterExpression.get())
         {
             for(size_t i=0; i<_numBindings; ++i)
@@ -118,8 +123,8 @@ public:
                     }
                 }
             }
-            bool pass = _filterExpression->evaluate(*_filterContext).getBool();
-            if(!pass)
+            Value const& res = _filterExpression->evaluate(*_filterContext);
+            if(res.isNull() || res.getBool() == false)
             {
                 return;
             }
@@ -155,6 +160,7 @@ public:
 
     void writeTuple(Value const* left, vector<Value const*> const& right)
     {
+        LOG4CXX_DEBUG(logger, "WRITE 2");
         if(_filterExpression.get())
         {
             for(size_t i=0; i<_numBindings; ++i)
@@ -173,8 +179,8 @@ public:
                     }
                 }
             }
-            bool pass = _filterExpression->evaluate(*_filterContext).getBool();
-            if(!pass)
+            Value const& res = _filterExpression->evaluate(*_filterContext);
+            if(res.isNull() || res.getBool() == false)
             {
                 return;
             }
@@ -209,6 +215,7 @@ public:
 
     void writeTuple(vector<Value const*> const& left, vector<Value const*> const& right)
     {
+        LOG4CXX_DEBUG(logger, "WRITE 2");
         if(_filterExpression.get())
         {
             for(size_t i=0; i<_numBindings; ++i)
@@ -227,8 +234,8 @@ public:
                     }
                 }
             }
-            bool pass = _filterExpression->evaluate(*_filterContext).getBool();
-            if(!pass)
+            Value const& res = _filterExpression->evaluate(*_filterContext);
+            if(res.isNull() || res.getBool() == false)
             {
                 return;
             }
