@@ -129,7 +129,7 @@ private:
     size_t                        _numKeys;
     vector<AttributeComparator>   _keyComparators;   //one per key
     vector<size_t>                _leftIds;          //key indeces in the left array:  attributes start at 0, dimensions start at numAttrs
-    vector<size_t>                _rightKeys;        //key indeces in the right array: attributes start at 0, dimensions start at numAttrs
+    vector<size_t>                _rightIds;        //key indeces in the right array: attributes start at 0, dimensions start at numAttrs
     vector<bool>                  _keyNullable;      //one per key, in the output
     size_t                        _hashJoinThreshold;
     size_t                        _numHashBuckets;
@@ -143,6 +143,8 @@ private:
     size_t                        _varSize;
     string                        _filterExpressionString;
     shared_ptr<Expression>        _filterExpression;
+    vector<string>                _leftNames;
+    vector<string>                _rightNames;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
@@ -153,7 +155,7 @@ private:
         return ((shared_ptr<OperatorParamPhysicalExpression>&) parameter)->getExpression()->evaluate().getString();
     }
 
-    void setParamKeys(string trimmedContent, vector<size_t> &keys, size_t shift)
+    void setParamIds(string trimmedContent, vector<size_t> &keys, size_t shift)
     {
         stringstream ss(trimmedContent);
         string tok;
@@ -161,16 +163,16 @@ private:
         {
             try
             {
-                uint64_t key;
+                uint64_t id;
                 if(tok[0] == '~')
                 {
-                    key = lexical_cast<uint64_t>(tok.substr(1)) + shift;
+                    id = lexical_cast<uint64_t>(tok.substr(1)) + shift;
                 }
                 else
                 {
-                    key = lexical_cast<uint64_t>(tok);
+                    id = lexical_cast<uint64_t>(tok);
                 }
-                keys.push_back(key);
+                keys.push_back(id);
             }
             catch (bad_lexical_cast const& exn)
             {
@@ -179,14 +181,41 @@ private:
         }
     }
 
-    void setParamLeftKeys(string trimmedContent)
+    void setParamLeftIds(string trimmedContent)
     {
-        setParamKeys(trimmedContent, _leftIds, _numLeftAttrs);
+        setParamIds(trimmedContent, _leftIds, _numLeftAttrs);
     }
 
-    void setParamRightKeys(string trimmedContent)
+    void setParamRightIds(string trimmedContent)
     {
-        setParamKeys(trimmedContent, _rightKeys, _numRightAttrs);
+        setParamIds(trimmedContent, _rightIds, _numRightAttrs);
+    }
+
+    void setParamNames(string trimmedContent, vector<string> &names)
+    {
+        stringstream ss(trimmedContent);
+        string tok;
+        while(getline(ss, tok, ','))
+        {
+            try
+            {
+                names.push_back(tok);
+            }
+            catch (bad_lexical_cast const& exn)
+            {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse keys";
+            }
+        }
+    }
+
+    void setParamLeftNames(string trimmedContent)
+    {
+        setParamNames(trimmedContent, _leftNames);
+    }
+
+    void setParamRightNames(string trimmedContent)
+    {
+        setParamNames(trimmedContent, _rightNames);
     }
 
     void setParamHashJoinThreshold(string trimmedContent)
@@ -325,16 +354,20 @@ public:
         _filterExpressionString(""),
         _filterExpression(NULL)
     {
-        string const leftKeysHeader                = "left_ids=";
-        string const rightKeysHeader               = "right_ids=";
+        string const leftIdsHeader                 = "left_ids=";
+        string const rightIdsHeader                = "right_ids=";
+        string const leftNamesHeader               = "left_names=";
+        string const rightNamesHeader              = "right_names=";
         string const hashJoinThresholdHeader       = "hash_join_threshold=";
         string const chunkSizeHeader               = "chunk_size=";
         string const algorithmHeader               = "algorithm=";
         string const keepDimensionsHeader          = "keep_dimensions=";
         string const bloomFilterSizeHeader         = "bloom_filter_size=";
         string const filterExpressionHeader        = "filter:";
-        bool leftKeysSet           = false;
-        bool rightKeysSet          = false;
+        bool leftIdsSet            = false;
+        bool rightIdsSet           = false;
+        bool leftNamesSet          = false;
+        bool rightNamesSet         = false;
         bool hashJoinThresholdSet  = false;
         bool chunkSizeSet          = false;
         bool keepDimensionsSet     = false;
@@ -348,13 +381,21 @@ public:
         for (size_t i= 0; i<nParams; ++i)
         {
             string parameterString = paramToString(operatorParameters[i], query, logical);
-            if (starts_with(parameterString, leftKeysHeader))
+            if (starts_with(parameterString, leftIdsHeader))
             {
-                setParam(parameterString, leftKeysSet, leftKeysHeader, &Settings::setParamLeftKeys);
+                setParam(parameterString, leftIdsSet, leftIdsHeader, &Settings::setParamLeftIds);
             }
-            else if (starts_with(parameterString, rightKeysHeader))
+            else if (starts_with(parameterString, rightIdsHeader ))
             {
-                setParam(parameterString, rightKeysSet, rightKeysHeader, &Settings::setParamRightKeys);
+                setParam(parameterString, rightIdsSet, rightIdsHeader, &Settings::setParamRightIds);
+            }
+            else if (starts_with(parameterString, leftNamesHeader))
+            {
+                setParam(parameterString, leftNamesSet, leftNamesHeader, &Settings::setParamLeftNames);
+            }
+            else if (starts_with(parameterString, rightNamesHeader))
+            {
+                setParam(parameterString, rightNamesSet, rightNamesHeader, &Settings::setParamRightNames);
             }
             else if (starts_with(parameterString, hashJoinThresholdHeader))
             {
@@ -407,13 +448,115 @@ private:
 
     void verifyInputs()
     {
-        throwIf(_leftIds.size() == 0,                    "no left join-on fields provided");
-        throwIf(_rightKeys.size() == 0,                  "no right join-on fields provided");
-        throwIf(_leftIds.size() != _rightKeys.size(),    "mismatched numbers of keys provided");
+        throwIf(_leftIds.size() && _leftNames.size(),     "both left_ids and left_names are set; use one or the other");
+        throwIf(_rightIds.size() && _rightNames.size(),   "both left_ids and left_names are set; use one or the other");
+        throwIf(_leftIds.size() == 0 && _leftNames.size() == 0,   "no left join-on fields provided");
+        throwIf(_rightIds.size() == 0 && _rightNames.size() == 0, "no right join-on fields provided");
+        if(_leftNames.size())
+        {
+            for(size_t i=0; i<_leftNames.size(); ++i)
+            {
+                string const& name = _leftNames[i];
+                bool found = false;
+                for(AttributeID j = 0; j<_numLeftAttrs; ++j)
+                {
+                    AttributeDesc const& attr = _leftSchema.getAttributes()[j];
+                    if(attr.getName() == name)
+                    {
+                        if(!found)
+                        {
+                            _leftIds.push_back(j);
+                            found = true;
+                        }
+                        else
+                        {
+                            ostringstream err;
+                            err<<"Left join field '"<<name<<"' is ambiguous; use ids or cast";
+                            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << err.str().c_str();
+                        }
+                    }
+                }
+                for(size_t j = 0; j<_numLeftDims; ++j)
+                {
+                    DimensionDesc const& dim = _leftSchema.getDimensions()[j];
+                    if(dim.getBaseName() == name)
+                    {
+                        if(!found)
+                        {
+                            _leftIds.push_back(j+_numLeftAttrs);
+                            found = true;
+                        }
+                        else
+                        {
+                            ostringstream err;
+                            err<<"Left join field '"<<name<<"' is ambiguous; use ids or cast";
+                            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << err.str().c_str();
+                        }
+                    }
+                }
+                if(!found)
+                {
+                    ostringstream err;
+                    err<<"Left join field '"<<name<<"' not found in the left array";
+                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << err.str().c_str();
+                }
+            }
+        }
+        if(_rightNames.size())
+        {
+            for(size_t i=0; i<_rightNames.size(); ++i)
+            {
+                string const& name = _rightNames[i];
+                bool found = false;
+                for(AttributeID j = 0; j<_numRightAttrs; ++j)
+                {
+                    AttributeDesc const& attr = _rightSchema.getAttributes()[j];
+                    if(attr.getName() == name)
+                    {
+                        if(!found)
+                        {
+                            _rightIds.push_back(j);
+                            found = true;
+                        }
+                        else
+                        {
+                            ostringstream err;
+                            err<<"Right join field '"<<name<<"' is ambiguous; use ids or cast";
+                            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << err.str().c_str();
+                        }
+                    }
+                }
+                for(size_t j = 0; j<_numRightDims; ++j)
+                {
+                    DimensionDesc const& dim = _rightSchema.getDimensions()[j];
+                    if(dim.getBaseName() == name)
+                    {
+                        if(!found)
+                        {
+                            _rightIds.push_back(j+_numRightAttrs);
+                            found = true;
+                        }
+                        else
+                        {
+                            ostringstream err;
+                            err<<"Right join field '"<<name<<"' is ambiguous; use ids or cast";
+                            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << err.str().c_str();
+                        }
+                    }
+                }
+                if(!found)
+                {
+                    ostringstream err;
+                    err<<"Right join field '"<<name<<"' not found in the right array";
+                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << err.str().c_str();
+                }
+            }
+        }
+        throwIf(_leftIds.size() != _rightIds.size(),    "mismatched numbers of join-on fields provided");
         for(size_t i =0; i<_leftIds.size(); ++i)
         {
             size_t leftKey  = _leftIds[i];
-            size_t rightKey = _rightKeys[i];
+            size_t rightKey = _rightIds[i];
             throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left id out of bounds");
             throwIf(rightKey >= _numRightAttrs + _numRightDims, "right id out of bounds");
             TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
@@ -430,7 +573,7 @@ private:
         for(size_t i =0; i<_numKeys; ++i)
         {
             size_t leftKey  = _leftIds[i];
-            size_t rightKey = _rightKeys[i];
+            size_t rightKey = _rightIds[i];
             throwIf(_leftMapToTuple[leftKey] != -1, "left keys not unique");
             throwIf(_rightMapToTuple[rightKey] != -1, "right keys not unique");
             _leftMapToTuple[leftKey]   = i;
@@ -477,7 +620,7 @@ private:
         ostringstream output;
         for(size_t i=0; i<_numKeys; ++i)
         {
-            output<<_leftIds[i]<<"->"<<_rightKeys[i]<<" ";
+            output<<_leftIds[i]<<"->"<<_rightIds[i]<<" ";
         }
         output<<"buckets "<< _numHashBuckets;
         output<<" chunk "<<_chunkSize;

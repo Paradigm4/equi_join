@@ -124,5 +124,11 @@ iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c an
 iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'hash_join_threshold=0', 'keep_dimensions=1' )" >> $OUTFILE 2>&1
 iquery -aq "equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'hash_join_threshold=0', 'keep_dimensions=1' )" >> $OUTFILE 2>&1
 
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 8" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_names=j,c', 'right_names=i,a', 'algorithm=merge_left_first', 'keep_dimensions=0')"  >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_names=j,c', 'right_ids=~0,0', 'algorithm=merge_left_first', 'keep_dimensions=0')"  >> $OUTFILE 2>&1
+
+
 diff test.out test.expected
 
