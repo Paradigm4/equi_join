@@ -19,8 +19,8 @@ $ iquery -aq "store(apply(build(<c:string>[j=1:5,3,0], '[(def),(mno),(pqr),(def)
 {3} 'pqr',3
 {4} 'def',4
 
-#Join the arrays on attribute 0 (string,i.e. left.a=right.c). This is difficult right now otherwise:
-$ iquery -aq "equi_join(left, right, 'left_ids=0', 'right_ids=0')"
+#Join the arrays on the string attribute, i.e. left.a=right.c:
+$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c')"
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,1
 {0,1} 'def',1.1,4
@@ -32,26 +32,67 @@ $ iquery -aq "equi_join(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
 {0,0} 1,'def',1.1
 ```
 
+Here's a comparison to the existing `cross_join` operator:
+```
+#Make a large 2D dense arrary:
+$ iquery -anq "store(build(<a:double> [x=1:10000,1000,0, y=1:10000,1000,0], random()), twod)"
+Query was executed successfully
+
+#Use cross_join to pull out a strip at x=128:
+$ time iquery -naq "consume(cross_join(twod as A, redimension(build(<x:int64>[i=0:0,1,0], 128), <i:int64>[x=1:10000,1000,0]) as B, A.x, B.x))"
+Query was executed successfully
+
+real	0m0.381s
+user	0m0.008s
+sys	0m0.004s
+
+#Same with equi_join:
+$ time iquery -naq "consume(equi_join(twod, build(<x:int64>[i=0:0,1,0], 128), 'left_names=x', 'right_names=x'))"
+Query was executed successfully
+
+real	0m0.315s
+user	0m0.008s
+sys	0m0.000s
+```
+Internally the operator detects that the join is on dimensions and uses a chunk filter structure to prevent irrelevant chunks from being scanned. The goal is to make many (if not all) uses of `cross_join` obsolete. The regular `join` on dimensions still reigns supreme.
+
 ## Usage
 ```
 equi_join(left_array, right_array, [, 'setting=value` [,...]])
 ```
-Where:
-* left and right array could be any SciDB arrays or operator outputs
-* `left_ids=a,~b,c`: 0-based dimension or attribute numbers to use as join keys from the left array; dimensions prefaced with `~`
-* `right_ids=d,e,f`: 0-based dimension or attribute numbers to use as join keys from the right array; dimensions prefaced with `~`
+Where left and right array could be any SciDB arrays or operator outputs.
+
+Specifying join-on fields (keys):
+* `left_names=a,b,c`: comma-separated dimension or attribute names from the left array
+* `left_ids=a,~b,c`: 0-based dimension or attribute ids from the left array; dimensions prefaced with `~`
+* `right_names=d,e,f`: comma-seaparated dimension or attribute names from the right array
+* `right_ids=d,e,f`: 0-based dimension or attribute ids from the right array; dimensions prefaced with `~`
+You can use either `names` or `ids` for either array, but not both. TBD: auto-detect matching fields by default.
+
+Additional filter on the output:
+* `filter:expression` can be used to apply an additional filter to partial joins. 
+The `expression` can be any valid boolean expression over the output attributes. For example:
+```
+$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'filter:b<d')"  
+{instance_id,value_no} a,b,d
+{0,0} 'def',1.1,4
+```
+Note, `equi_join(..., 'filter:expression')` is equivalent to `filter(equi_join(...), expression)` but since the operator is materializing, the former is implemented to apply filtering prior to materialization. This is a big efficiency improvement in cases where the join on keys increases the size of the data before filtering.
+
+Other settings:
 * `chunk_size=S`: for the output
 * `keep_dimensions=0/1`: 1 if the output should contain all the input dimensions, converted to attributes. 0 is default, meaning dimensions are only retained if they are join keys.
 * `hash_join_threshold=MB`: a threshold on the array size used to choose the algorithm; see next section for details; defaults to the `merge-sort-buffer` config
+* `bloom_filter_size=bits`: the size of the bloom filters to use, in units of bits; TBD clean this up
 * `algorithm=name`: a hard override on how to perform the join, currently supported values are below; see next section for details
-  * `hash_replicate_left`: hash join replicating the left array
-  * `hash_replicate_right`: hash join replicating the right array
-  * `merge_left_first`: merge join redistributing the left array first
+  * `hash_replicate_left`: copy the entire left array to every instance and perform a hash join
+  * `hash_replicate_right`: copy the entire right array to every instance and perform a hash join
+  * `merge_left_first`: merge join redistributing the left array first (see below for details)
   * `merge_right_first`: merge join redistributing the right array first
  
 There should be as many left_ids as right_ids and they must match data types (dimensions are int64). The result is returned as:
 `<join_key_0:type [NULL], join_key_1:.., left_att_0:type, left_att_1,... right_att_0...> [instance_id, value_no]`
-Note the join keys are placed first, their names are inherited from the left array, they are nullable if nullable in any of the inputs (however NULL keys do not participate in the join). This is followed by remaining left attributes, then left dimensions if requested, then right attributes, then right dimensions.
+Note the join keys are placed first, their names are assigned from the left array, they are nullable if nullable in either of the inputs (however NULL keys do not participate in the join). This is followed by remaining left attributes, then left dimensions if requested, then right attributes, then right dimensions.
 
 The order of the returned result is indeterminate: will vary with algorithm and even number of instances.
 
@@ -61,16 +102,14 @@ The operator first estimates the lower bound sizes of the two input arrays and t
 ### Size Estimation
 It is easy to determine if an input array is materialized (leaf of a query or output of a materializing operator). If this is the case, the exact size of the array can be determined very quickly (O of number of chunks with no disk scans). Otherwise, the operator initiates a pre-scan of just the Empty Tag attribute to find the number of non-empty cells in the array. The pre-scan continues until either completion, or the estimated size reaching `hash_join_threshold`. The per-instance lower bounds of `hash_join_threshold` or less are then added together with one round of message exchange.
 
-### Hash Replicate
-If it is determined (or user-dictated) that one of the arrays is small enough to fit in memory on every instance, then that array is copied entirely to every instance and loaded into an in-memory hash table. The other array is then read as-is and joined via hash table lookup. TBD: filter the chunks of the other array.
+### Replicate and Hash
+If it is determined (or user-dictated) that one of the arrays is small enough to fit in memory on every instance, then that array is copied entirely to every instance and loaded into an in-memory hash table. The table is used to assemble a filter over the chunk positions in the other array. The other array is then read, using the filter to exclude irrelevant chunks - preventing disk scans. Chunks that make it through the filter are joined using the hash table lookup.
 
 ### Merge
-If both arrays are sufficiently large, the smaller array's join keys are hashed and the hash is used to redistribute it such that each instance gets roughly an equal portion. The other array is then redistributed along the same hash, ensuring co-location. Finally the redistributed arrays are sorted and joined using a merge sort pass. TBD: also filter chunks of the other array and potentially add a bloom filter.
+If both arrays are sufficiently large, the smaller array's join keys are hashed and the hash is used to redistribute it such that each instance gets roughly an equal portion. Concurrently, a filter over chunk positions and a bloom filter over the join keys are built. The filters are copied to every instance. The other array is then read, through the filters, and redistributed along the same hash, ensuring co-location. Now that both arrays are redistributed and their exact sizes are known, the algorithm may decide to read one into a hash table (if small enough) or sort both and join via a merge of sorted arrays.
 
-## Still needs a lot of work!
- * implement chunk filtering when joining by dimensions, possibly bloom filter for merge path
- * fix the parameters: accept decent looking dimension references and names
+## Still needs some work
  * pick join-on keys automatically by checking for matching names, if not supplied
- * handle cases where join expands the data, potentially add boolean expression to run on the data as join is computed
+ * add outer joins
 
 ... something like that
