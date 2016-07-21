@@ -39,72 +39,103 @@ using namespace equi_join;
 namespace equi_join
 {
 
-class MemArrayAppender : public boost::noncopyable
+enum ArrayWriterMode
+{
+    PRE_SORT,         //first phase:  convert input to tuples and add a hash attribute
+    SPLIT_ON_HASH,    //second phase: split sorted tuples into different chunks based on hash - to send around the cluster
+    OUTPUT            //final phase:  combine left and right tuples into
+};
+
+template<ArrayWriterMode mode>
+class ArrayWriter : public boost::noncopyable
 {
 private:
-    shared_ptr<Array> _output;
-    InstanceID const _myInstanceId;
-    size_t const _numAttributes;
-    size_t const _leftTupleSize;
-    size_t const _numKeys;
-    size_t const _chunkSize;
-    shared_ptr<Query> _query;
-    Settings const& _settings;
-    Coordinates _outputPosition;
-    vector<shared_ptr<ArrayIterator> >_arrayIterators;
-    vector<shared_ptr<ChunkIterator> >_chunkIterators;
-    Value _boolTrue;
-    shared_ptr<Expression> _filterExpression;
-    vector<BindInfo> _filterBindings;
-    size_t _numBindings;
-    shared_ptr<ExpressionContext> _filterContext;
+    shared_ptr<Array>                   _output;
+    InstanceID const                    _myInstanceId;
+    size_t const                        _numInstances;
+    size_t const                        _numAttributes;
+    size_t const                        _leftTupleSize;
+    size_t const                        _numKeys;
+    size_t const                        _chunkSize;
+    shared_ptr<Query>                   _query;
+    Settings const&                     _settings;
+    vector<Value const*>                _tuplePlaceholder;
+    Coordinates                         _outputPosition;
+    vector<shared_ptr<ArrayIterator> >  _arrayIterators;
+    vector<shared_ptr<ChunkIterator> >  _chunkIterators;
+    vector <uint32_t>                   _hashBreaks;
+    int64_t                             _currentBreak;
+    Value                               _boolTrue;
+    shared_ptr<Expression>              _filterExpression;
+    vector<BindInfo>                    _filterBindings;
+    size_t                              _numBindings;
+    shared_ptr<ExpressionContext>       _filterContext;
 
 public:
-    MemArrayAppender(Settings const& settings, shared_ptr<Query> const& query, string const name = ""):
-        _output(make_shared<MemArray>(settings.getOutputSchema(query, name), query)),
-        _myInstanceId(query->getInstanceID()),
-        _numAttributes(settings.getNumOutputAttrs()),
-        _leftTupleSize(settings.getLeftTupleSize()),
-        _numKeys(settings.getNumKeys()),
-        _chunkSize(settings.getChunkSize()),
-        _query(query),
-        _settings(settings),
-        _outputPosition(2 , 0),
-        _arrayIterators(_numAttributes+1, NULL),
-        _chunkIterators(_numAttributes+1, NULL),
-        _filterExpression(settings.getFilterExpression())
+    ArrayWriter(Settings const& settings, shared_ptr<Query> const& query, ArrayDesc const& schema):
+        _output           (make_shared<MemArray>( schema, query)),
+        _myInstanceId     (query->getInstanceID()),
+        _numInstances     (query->getInstancesCount()),
+        _numAttributes    (_output->getArrayDesc().getAttributes(true).size() ),
+        _leftTupleSize    (settings.getLeftTupleSize()),
+        _numKeys          (settings.getNumKeys()),
+        _chunkSize        (settings.getChunkSize()),
+        _query            (query),
+        _settings         (settings),
+        _tuplePlaceholder (_numAttributes,  NULL),
+        _outputPosition   (mode == OUTPUT ? 2 : 3, 0),
+        _arrayIterators   (_numAttributes+1, NULL),
+        _chunkIterators   (_numAttributes+1, NULL),
+        _hashBreaks       (_numInstances-1, 0),
+        _currentBreak     (0),
+        _filterExpression (mode == OUTPUT ? settings.getFilterExpression() : NULL)
     {
-        _outputPosition[0] = _myInstanceId;
-        _outputPosition[1] = 0;
+        _boolTrue.setBool(true);
         for(size_t i =0; i<_numAttributes+1; ++i)
         {
             _arrayIterators[i] = _output->getIterator(i);
         }
-        _boolTrue.setBool(true);
-        if(_filterExpression.get())
+        if(mode == OUTPUT)
         {
-            _filterBindings = _filterExpression->getBindings();
-            _numBindings = _filterBindings.size();
-            _filterContext.reset(new ExpressionContext(*_filterExpression));
-            for(size_t i =0; i<_filterBindings.size(); ++i)
+            _outputPosition[0] = _myInstanceId;
+            _outputPosition[1] = 0;
+            if(_filterExpression.get())
             {
-                BindInfo const& binding = _filterBindings[i];
-                if(binding.kind == BindInfo::BI_VALUE)
+                _filterBindings = _filterExpression->getBindings();
+                _numBindings = _filterBindings.size();
+                _filterContext.reset(new ExpressionContext(*_filterExpression));
+                for(size_t i =0; i<_filterBindings.size(); ++i)
                 {
-                    (*_filterContext)[i] = binding.value;
+                    BindInfo const& binding = _filterBindings[i];
+                    if(binding.kind == BindInfo::BI_VALUE)
+                    {
+                        (*_filterContext)[i] = binding.value;
+                    }
+                    else if(binding.kind == BindInfo::BI_COORDINATE)
+                    {
+                        throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "filtering on dimensions not supported";
+                    }
                 }
-                else if(binding.kind == BindInfo::BI_COORDINATE)
+            }
+        }
+        else
+        {
+            _outputPosition[0] = 0;
+            _outputPosition[1] = _myInstanceId;
+            _outputPosition[2] = 0;
+            if(mode == SPLIT_ON_HASH)
+            {
+                uint32_t break_interval = settings.getNumHashBuckets() / _numInstances;
+                for(size_t i=0; i<_numInstances-1; ++i)
                 {
-                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "filtering on dimensions not supported";
+                    _hashBreaks[i] = break_interval * (i+1);
                 }
             }
         }
     }
 
-public:
-    void writeTuple(vector<Value const*> const& left, Value const* right)
+    bool tuplePassesFilter(vector<Value const*> const& tuple)
     {
-        LOG4CXX_DEBUG(logger, "WRITE 1");
         if(_filterExpression.get())
         {
             for(size_t i=0; i<_numBindings; ++i)
@@ -113,23 +144,44 @@ public:
                 if(binding.kind == BindInfo::BI_ATTRIBUTE)
                 {
                     size_t index = _filterBindings[i].resolvedId;
-                    if(index<_leftTupleSize)
-                    {
-                        (*_filterContext)[i] = *(left[index]);
-                    }
-                    else
-                    {
-                        (*_filterContext)[i] = *(right + index - _leftTupleSize + _numKeys);
-                    }
+                    (*_filterContext)[i] = *(tuple[index]);
                 }
             }
             Value const& res = _filterExpression->evaluate(*_filterContext);
             if(res.isNull() || res.getBool() == false)
             {
-                return;
+                return false;
             }
         }
-        if( _outputPosition[1] % _chunkSize == 0)
+        return true;
+    }
+
+    void writeTuple(vector<Value const*> const& tuple)
+    {
+        if(mode == OUTPUT && !tuplePassesFilter(tuple))
+        {
+            return;
+        }
+        bool newChunk = false;
+        if(mode == SPLIT_ON_HASH)
+        {
+            uint32_t hash = tuple[ _numAttributes-1 ]->getUint32();
+            while( static_cast<size_t>(_currentBreak) < _numInstances - 1 && hash > _hashBreaks[_currentBreak] )
+            {
+                ++_currentBreak;
+            }
+            if( _currentBreak != _outputPosition[0] )
+            {
+                _outputPosition[0] = _currentBreak;
+                _outputPosition[2] = 0;
+                newChunk =true;
+            }
+        }
+        if (_outputPosition[mode == OUTPUT ? 1 : 2] % _chunkSize == 0)
+        {
+            newChunk = true;
+        }
+        if( newChunk )
         {
             for(size_t i=0; i<_numAttributes+1; ++i)
             {
@@ -137,313 +189,70 @@ public:
                 {
                     _chunkIterators[i]->flush();
                 }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
+                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE );
             }
         }
         for(size_t i=0; i<_numAttributes; ++i)
         {
             _chunkIterators[i]->setPosition(_outputPosition);
-            if(i<_leftTupleSize)
-            {
-                _chunkIterators[i]->writeItem(*(left[i]));
-            }
-            else
-            {
-                Value const* v = right + i - _leftTupleSize + _numKeys;
-                _chunkIterators[i]->writeItem(*v);
-            }
+            _chunkIterators[i]->writeItem(*(tuple[i]));
         }
         _chunkIterators[_numAttributes]->setPosition(_outputPosition);
         _chunkIterators[_numAttributes]->writeItem(_boolTrue);
-        ++_outputPosition[1];
+        ++_outputPosition[ mode == OUTPUT ? 1 : 2];
+    }
+
+    void writeTuple(vector<Value const*> const& left, Value const* right)
+    {
+        for(size_t i=0; i<_numAttributes; ++i)
+        {
+            if(i<_leftTupleSize)
+            {
+                _tuplePlaceholder[i] = left[i];
+            }
+            else
+            {
+                _tuplePlaceholder[i] = right + i - _leftTupleSize + _numKeys;
+            }
+        }
+        writeTuple(_tuplePlaceholder);
     }
 
     void writeTuple(Value const* left, vector<Value const*> const& right)
     {
-        LOG4CXX_DEBUG(logger, "WRITE 2");
-        if(_filterExpression.get())
-        {
-            for(size_t i=0; i<_numBindings; ++i)
-            {
-                BindInfo const& binding = _filterBindings[i];
-                if(binding.kind == BindInfo::BI_ATTRIBUTE)
-                {
-                    size_t index = _filterBindings[i].resolvedId;
-                    if(index<_leftTupleSize)
-                    {
-                        (*_filterContext)[i] = (left[index]);
-                    }
-                    else
-                    {
-                        (*_filterContext)[i] = *(right[index - _leftTupleSize + _numKeys]);
-                    }
-                }
-            }
-            Value const& res = _filterExpression->evaluate(*_filterContext);
-            if(res.isNull() || res.getBool() == false)
-            {
-                return;
-            }
-        }
-        if( _outputPosition[1] % _chunkSize == 0)
-        {
-            for(size_t i=0; i<_numAttributes+1; ++i)
-            {
-                if(_chunkIterators[i].get())
-                {
-                    _chunkIterators[i]->flush();
-                }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
-            }
-        }
         for(size_t i=0; i<_numAttributes; ++i)
         {
-            _chunkIterators[i]->setPosition(_outputPosition);
             if(i<_leftTupleSize)
             {
-                _chunkIterators[i]->writeItem(left[i]);
+                _tuplePlaceholder[i] = left + i;
             }
             else
             {
-                _chunkIterators[i]->writeItem(*(right[i - _leftTupleSize + _numKeys ]));
+                _tuplePlaceholder[i] = right[i - _leftTupleSize + _numKeys];
             }
         }
-        _chunkIterators[_numAttributes]->setPosition(_outputPosition);
-        _chunkIterators[_numAttributes]->writeItem(_boolTrue);
-        ++_outputPosition[1];
-    }
+        writeTuple(_tuplePlaceholder);
+   }
 
-    void writeTuple(vector<Value const*> const& left, vector<Value const*> const& right)
-    {
-        LOG4CXX_DEBUG(logger, "WRITE 2");
-        if(_filterExpression.get())
-        {
-            for(size_t i=0; i<_numBindings; ++i)
-            {
-                BindInfo const& binding = _filterBindings[i];
-                if(binding.kind == BindInfo::BI_ATTRIBUTE)
-                {
-                    size_t index = _filterBindings[i].resolvedId;
-                    if(index<_leftTupleSize)
-                    {
-                        (*_filterContext)[i] = *(left[index]);
-                    }
-                    else
-                    {
-                        (*_filterContext)[i] = *(right[index - _leftTupleSize + _numKeys]);
-                    }
-                }
-            }
-            Value const& res = _filterExpression->evaluate(*_filterContext);
-            if(res.isNull() || res.getBool() == false)
-            {
-                return;
-            }
-        }
-        if( _outputPosition[1] % _chunkSize == 0)
-        {
-            for(size_t i=0; i<_numAttributes+1; ++i)
-            {
-                if(_chunkIterators[i].get())
-                {
-                    _chunkIterators[i]->flush();
-                }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
-            }
-        }
-        for(size_t i=0; i<_numAttributes; ++i)
-        {
-            _chunkIterators[i]->setPosition(_outputPosition);
-            if(i<_leftTupleSize)
-            {
-                _chunkIterators[i]->writeItem(*(left[i]));
-            }
-            else
-            {
-                _chunkIterators[i]->writeItem(*(right[i - _leftTupleSize + _numKeys ]));
-            }
-        }
-        _chunkIterators[_numAttributes]->setPosition(_outputPosition);
-        _chunkIterators[_numAttributes]->writeItem(_boolTrue);
-        ++_outputPosition[1];
-    }
+   void writeTuple(vector<Value const*> const& left, vector<Value const*> const& right)
+   {
+       for(size_t i=0; i<_numAttributes; ++i)
+       {
+           if(i<_leftTupleSize)
+           {
+               _tuplePlaceholder[i] = left[i];
+           }
+           else
+           {
+               _tuplePlaceholder[i] = right[i - _leftTupleSize + _numKeys];
+           }
+       }
+       writeTuple(_tuplePlaceholder);
+   }
 
     shared_ptr<Array> finalize()
     {
         for(size_t i =0; i<_numAttributes+1; ++i)
-        {
-            if(_chunkIterators[i].get())
-            {
-                _chunkIterators[i]->flush();
-            }
-            _chunkIterators[i].reset();
-            _arrayIterators[i].reset();
-        }
-        shared_ptr<Array> result = _output;
-        _output.reset();
-        return result;
-    }
-};
-
-class PreSortWriter : public boost::noncopyable
-{
-private:
-    shared_ptr<Array> _output;
-    InstanceID const _myInstanceId;
-    size_t const _numAttributes;
-    size_t const _chunkSize;
-    shared_ptr<Query> _query;
-    Coordinates _outputPosition;
-    vector<shared_ptr<ArrayIterator> >_arrayIterators;
-    vector<shared_ptr<ChunkIterator> >_chunkIterators;
-
-public:
-    PreSortWriter(ArrayDesc const& schema, shared_ptr<Query> const& query, string const name = ""):
-        _output(make_shared<MemArray>(schema, query)),
-        _myInstanceId(query->getInstanceID()),
-        _numAttributes(schema.getAttributes(true).size()),
-        _chunkSize(schema.getDimensions()[2].getChunkInterval()),
-        _query(query),
-        _outputPosition(3 , 0),
-        _arrayIterators(_numAttributes, NULL),
-        _chunkIterators(_numAttributes, NULL)
-    {
-        _outputPosition[0] = 0;
-        _outputPosition[1] = _myInstanceId;
-        _outputPosition[2] = 0;
-        for(size_t i =0; i<_numAttributes; ++i)
-        {
-            _arrayIterators[i] = _output->getIterator(i);
-        }
-    }
-
-public:
-    void writeTuple(vector<Value const*> const& tuple)
-    {
-        if( _outputPosition[2] % _chunkSize == 0)
-        {
-            for(size_t i=0; i<_numAttributes; ++i)
-            {
-                if(_chunkIterators[i].get())
-                {
-                    _chunkIterators[i]->flush();
-                }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, i == 0 ?
-                                                                                ChunkIterator::SEQUENTIAL_WRITE :
-                                                                                ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
-            }
-        }
-        for(size_t i=0; i<_numAttributes; ++i)
-        {
-            _chunkIterators[i]->setPosition(_outputPosition);
-            _chunkIterators[i]->writeItem(*(tuple[i]));
-        }
-        ++_outputPosition[2];
-    }
-
-    shared_ptr<Array> finalize()
-    {
-        for(size_t i =0; i<_numAttributes; ++i)
-        {
-            if(_chunkIterators[i].get())
-            {
-                _chunkIterators[i]->flush();
-            }
-            _chunkIterators[i].reset();
-            _arrayIterators[i].reset();
-        }
-        shared_ptr<Array> result = _output;
-        _output.reset();
-        return result;
-    }
-};
-
-class PreSgWriter : public boost::noncopyable
-{
-private:
-    shared_ptr<Array> _output;
-    size_t const _numInstances;
-    InstanceID const _myInstanceId;
-    size_t const _numAttributes;
-    size_t const _chunkSize;
-    shared_ptr<Query> _query;
-    Coordinates _outputPosition;
-    vector<shared_ptr<ArrayIterator> >_arrayIterators;
-    vector<shared_ptr<ChunkIterator> >_chunkIterators;
-    vector <uint32_t> _hashBreaks;
-    int64_t _currentBreak;
-
-public:
-    PreSgWriter(ArrayDesc const& schema, shared_ptr<Query> const& query, Settings const& settings):
-        _output(make_shared<MemArray>(schema, query)),
-        _numInstances(query->getInstancesCount()),
-        _myInstanceId(query->getInstanceID()),
-        _numAttributes(schema.getAttributes(true).size()),
-        _chunkSize(schema.getDimensions()[2].getChunkInterval()),
-        _query(query),
-        _outputPosition(3 , 0),
-        _arrayIterators(_numAttributes, NULL),
-        _chunkIterators(_numAttributes, NULL),
-        _hashBreaks(_numInstances-1, 0),
-        _currentBreak(0)
-    {
-        _outputPosition[0] = 0;
-        _outputPosition[1] = _myInstanceId;
-        _outputPosition[2] = 0;
-        for(size_t i =0; i<_numAttributes; ++i)
-        {
-            _arrayIterators[i] = _output->getIterator(i);
-        }
-        uint32_t break_interval = settings.getNumHashBuckets() / _numInstances;
-        for(size_t i=0; i<_numInstances-1; ++i)
-        {
-            _hashBreaks[i] = break_interval * (i+1);
-        }
-    }
-
-public:
-    void writeTuple(vector<Value const*> const& tuple)
-    {
-        uint32_t hash = tuple[ _numAttributes-1 ]->getUint32();
-        while( static_cast<size_t>(_currentBreak) < _numInstances - 1 && hash > _hashBreaks[_currentBreak] )
-        {
-            ++_currentBreak;
-        }
-        bool newChunk = false;
-        if( _currentBreak != _outputPosition[0] )
-        {
-            _outputPosition[0] = _currentBreak;
-            _outputPosition[2] = 0;
-            newChunk =true;
-        }
-        else if (_outputPosition[2] % _chunkSize == 0)
-        {
-            newChunk =true;
-        }
-        if( newChunk )
-        {
-            for(size_t i=0; i<_numAttributes; ++i)
-            {
-                if(_chunkIterators[i].get())
-                {
-                    _chunkIterators[i]->flush();
-                }
-                _chunkIterators[i] = _arrayIterators[i]->newChunk(_outputPosition).getIterator(_query, i == 0 ?
-                                                                                ChunkIterator::SEQUENTIAL_WRITE :
-                                                                                ChunkIterator::SEQUENTIAL_WRITE | ChunkIterator::NO_EMPTY_CHECK);
-            }
-        }
-        for(size_t i=0; i<_numAttributes; ++i)
-        {
-            _chunkIterators[i]->setPosition(_outputPosition);
-            _chunkIterators[i]->writeItem(*(tuple[i]));
-        }
-        ++_outputPosition[2];
-    }
-
-    shared_ptr<Array> finalize()
-    {
-        for(size_t i =0; i<_numAttributes; ++i)
         {
             if(_chunkIterators[i].get())
             {
@@ -1118,7 +927,7 @@ public:
         vector<Value> dimVal(nDims);
         size_t const numKeys = settings.getNumKeys();
         JoinHashTable::const_iterator iter = table.getIterator();
-        MemArrayAppender result (settings, query);
+        ArrayWriter<OUTPUT> result(settings, query, _schema);
         for(size_t i=0; i<nAttrs; ++i)
         {
             aiters[i] = array->getConstIterator(i);
@@ -1232,7 +1041,7 @@ public:
                                       ChunkFilterInstantiation& chunkFilter, BloomFilter& bloomFilter)
     {
         ArrayDesc schema = settings.getPreSgSchema <which> (query);
-        PreSortWriter writer(schema, query);
+        ArrayWriter<PRE_SORT> writer(settings, query, schema);
         size_t const nAttrs = (which == LEFT ?  settings.getNumLeftAttrs() : settings.getNumRightAttrs());
         size_t const nDims  = (which == LEFT ?  settings.getNumLeftDims()  : settings.getNumRightDims());
         size_t const tupleSize = (which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
@@ -1346,7 +1155,7 @@ public:
     shared_ptr<Array> sortedToPreSg(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
     {
         ArrayDesc schema = settings.getPreSgSchema<which>(query);
-        PreSgWriter writer(schema, query, settings);
+        ArrayWriter<SPLIT_ON_HASH> writer(settings, query, schema);
         size_t const nAttrs = schema.getAttributes().size();
         vector<Value const*> tuple ( nAttrs, NULL);
         vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs, NULL);
@@ -1436,7 +1245,7 @@ public:
 
     shared_ptr<Array> localSortedMergeJoin(shared_ptr<Array>& leftSorted, shared_ptr<Array>& rightSorted, shared_ptr<Query>& query, Settings const& settings)
     {
-        MemArrayAppender output(settings, query, _schema.getName());
+        ArrayWriter<OUTPUT> output(settings, query, _schema);
         vector<AttributeComparator> const& comparators = settings.getKeyComparators();
         size_t const numKeys = settings.getNumKeys();
         SortedTupleCursor leftCursor (leftSorted, query);
