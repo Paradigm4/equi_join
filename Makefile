@@ -57,7 +57,7 @@ all: libequi_join.so
 clean:
 	rm -rf *.so *.o
 
-libequi_join.so: $(SRCS) EquiJoinSettings.h JoinHashTable.h 
+libequi_join.so: $(SRCS) ArrayWriter.h EquiJoinSettings.h JoinHashTable.h 
 	@if test ! -d "$(SCIDB)"; then echo  "Error. Try:\n\nmake SCIDB=<PATH TO SCIDB INSTALL PATH>"; exit 1; fi
 	$(CXX) $(CCFLAGS) $(INC) -o LogicalEquiJoin.o -c LogicalEquiJoin.cpp
 	$(CXX) $(CCFLAGS) $(INC) -o PhysicalEquiJoin.o -c PhysicalEquiJoin.cpp

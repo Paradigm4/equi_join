@@ -43,7 +43,7 @@ enum ArrayWriterMode
 {
     PRE_SORT,         //first phase:  convert input to tuples and add a hash attribute
     SPLIT_ON_HASH,    //second phase: split sorted tuples into different chunks based on hash - to send around the cluster
-    OUTPUT            //final phase:  combine left and right tuples into
+    OUTPUT            //final phase:  combine left and right tuples into the final result, optionally filtering with the supplied expression
 };
 
 template<ArrayWriterMode mode>
