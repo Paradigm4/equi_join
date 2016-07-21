@@ -458,7 +458,7 @@ public:
     }
 };
 
-} } //namespace scidb::grouped_aggregate
+} } //namespace scidb::equi_join
 
 
 #endif /* JOINHASHTABLE_H_ */

@@ -67,7 +67,7 @@ private:
 
 public:
     ArrayWriter(Settings const& settings, shared_ptr<Query> const& query, ArrayDesc const& schema):
-        _output           (make_shared<MemArray>( schema, query)),
+        _output           (std::make_shared<MemArray>( schema, query)),
         _myInstanceId     (query->getInstanceID()),
         _numInstances     (query->getInstancesCount()),
         _numAttributes    (_output->getArrayDesc().getAttributes(true).size() ),
@@ -261,8 +261,6 @@ public:
     }
 };
 
-
-
-} } } } //namespace scidb::equi_join
+} } //namespace scidb::equi_join
 
 #endif //ARRAY_WRITER_H
