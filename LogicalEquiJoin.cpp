@@ -26,6 +26,7 @@
 #include "query/Operator.h"
 
 #include "EquiJoinSettings.h"
+#include "ArrayIO.h"
 
 namespace scidb
 {

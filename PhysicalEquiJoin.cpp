@@ -24,449 +24,16 @@
 */
 
 #include <query/Operator.h>
-#include <util/Network.h>
 #include <array/SortArray.h>
-#include "ArrayWriter.h"
-#include "JoinHashTable.h"
 
+#include "ArrayIO.h"
+#include "JoinHashTable.h"
 
 namespace scidb
 {
 
 using namespace std;
 using namespace equi_join;
-
-namespace equi_join
-{
-
-class SortedTupleCursor
-{
-private:
-    shared_ptr<Array> _input;
-    shared_ptr<Query> _query;
-    size_t const _nAttrs;
-    vector<Value const*> _tuple;
-    Coordinate const _chunkSize;
-    Coordinate _currChunkIdx;
-    vector<shared_ptr<ConstArrayIterator> > _aiters;
-    vector<shared_ptr<ConstChunkIterator> > _citers;
-
-public:
-    SortedTupleCursor(shared_ptr<Array>& input, shared_ptr<Query>& query):
-        _input(input),
-        _query(query),
-        _nAttrs(input->getArrayDesc().getAttributes(true).size()),
-        _tuple(_nAttrs, NULL),
-        _chunkSize(input->getArrayDesc().getDimensions()[0].getChunkInterval()),
-        _currChunkIdx(0),
-        _aiters(_nAttrs, NULL),
-        _citers(_nAttrs, NULL)
-    {
-        Dimensions const& dims = input->getArrayDesc().getDimensions();
-        if(dims.size()!=1 || dims[0].getStartMin() != 0)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-        }
-        for(size_t i =0; i<_nAttrs; ++i)
-        {
-            _aiters[i] = _input->getConstIterator(i);
-        }
-        if(!end())
-        {
-            _currChunkIdx = _aiters[0]->getPosition()[0];
-            for(size_t i=0; i<_nAttrs; ++i)
-            {
-                _citers[i] = _aiters[i]->getChunk().getConstIterator();
-            }
-            if(_citers[0]->end())
-            {   //should not happen with sorted 1D array
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-            }
-        }
-    }
-
-    bool end()
-    {
-        return _aiters[0]->end();
-    }
-
-    vector<Value const*> const& getTuple()
-    {
-        if(end())
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-        }
-        for(size_t i =0; i<_nAttrs; ++i)
-        {
-            _tuple[i] = &(_citers[i]->getItem());
-        }
-        return _tuple;
-    }
-
-    void next()
-    {
-        for(size_t i =0; i<_nAttrs; ++i)
-        {
-            ++(*_citers[i]);
-        }
-        if(_citers[0]->end())
-        {
-            for(size_t i =0; i<_nAttrs; ++i)
-            {
-                ++(*_aiters[i]);
-            }
-            if(_aiters[0]->end())
-            {
-                return;
-            }
-            _currChunkIdx = _aiters[0]->getPosition()[0];
-            for(size_t i=0; i<_nAttrs; ++i)
-            {
-                _citers[i] = _aiters[i]->getChunk().getConstIterator();
-            }
-            if(_citers[0]->end())
-            {   //should not happen with sorted 1D array
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-            }
-        }
-    }
-
-    Coordinate getIdx()
-    {
-        return _citers[0]->getPosition()[0];
-    }
-
-    void setIdx(Coordinate idx)
-    {
-        if(idx<0)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-        }
-        Coordinates pos (1,idx);
-        if(!end() && idx % _chunkSize == _currChunkIdx) //easy
-        {
-            for(size_t i=0; i<_nAttrs; ++i)
-            {
-                if(!_citers[i]->setPosition(pos))
-                {
-                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-                }
-            }
-        }
-        else
-        {
-            for(size_t i=0; i<_nAttrs; ++i)
-            {
-                _citers[i].reset();
-                if(!_aiters[i]->setPosition(pos))
-                {
-                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-                }
-            }
-            _currChunkIdx = _aiters[0]->getPosition()[0];
-            for(size_t i=0; i<_nAttrs; ++i)
-            {
-                _citers[i] = _aiters[i]->getChunk().getConstIterator();
-                if(!_citers[i]->setPosition(pos))
-                {
-                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
-                }
-            }
-        }
-    }
-};
-
-class BitVector
-{
-private:
-    size_t _size;
-    vector<char> _data;
-
-public:
-    BitVector (size_t const bitSize):
-        _size(bitSize),
-        _data( (_size+7) / 8, 0)
-    {}
-
-    BitVector(size_t const bitSize, void const* data):
-        _size(bitSize),
-        _data( (_size+7) / 8, 0)
-    {
-        memcpy(&(_data[0]), data, _data.size());
-    }
-
-    void set(size_t const& idx)
-    {
-        if(idx >= _size)
-        {
-            throw 0;
-        }
-        size_t byteIdx = idx / 8;
-        size_t bitIdx  = idx - byteIdx * 8;
-        char& b = _data[ byteIdx ];
-        b = b | (1 << bitIdx);
-    }
-
-    bool get(size_t const& idx) const
-    {
-        if(idx >= _size)
-        {
-            throw 0;
-        }
-        size_t byteIdx = idx / 8;
-        size_t bitIdx  = idx - byteIdx * 8;
-        char const& b = _data[ byteIdx ];
-        return (b & (1 << bitIdx));
-    }
-
-    size_t getBitSize() const
-    {
-        return _size;
-    }
-
-    size_t getByteSize() const
-    {
-        return _data.size();
-    }
-
-    char const* getData() const
-    {
-        return &(_data[0]);
-    }
-
-    void orIn(BitVector const& other)
-    {
-        if(other._size != _size)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "OR-ing in unequal vit vectors";
-        }
-        for(size_t i =0; i<_data.size(); ++i)
-        {
-            _data[i] |= other._data[i];
-        }
-    }
-};
-
-class BloomFilter
-{
-public:
-    static uint32_t const hashSeed1 = 0x5C1DB123;
-    static uint32_t const hashSeed2 = 0xACEDBEEF;
-
-private:
-    BitVector _vec;
-    mutable vector<char> _hashBuf;
-
-public:
-    BloomFilter(size_t const bitSize):
-        _vec(bitSize),
-        _hashBuf(64)
-    {}
-
-    void addData(void const* data, size_t const dataSize )
-    {
-        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed1) % _vec.getBitSize();
-        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed2) % _vec.getBitSize();
-        _vec.set(hash1);
-        _vec.set(hash2);
-    }
-
-    bool hasData(void const* data, size_t const dataSize ) const
-    {
-        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed1) % _vec.getBitSize();
-        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed2) % _vec.getBitSize();
-        return _vec.get(hash1) && _vec.get(hash2);
-    }
-
-    void addTuple(vector<Value const*> data, size_t const numKeys)
-    {
-        size_t totalSize = 0;
-        for(size_t i=0; i<numKeys; ++i)
-        {
-            totalSize+=data[i]->size();
-        }
-        if(_hashBuf.size() < totalSize)
-        {
-            _hashBuf.resize(totalSize);
-        }
-        char* ch = &_hashBuf[0];
-        for(size_t i =0; i<numKeys; ++i)
-        {
-            memcpy(ch, data[i]->data(), data[i]->size());
-            ch += data[i]->size();
-        }
-        addData(&_hashBuf[0], totalSize);
-    }
-
-    bool hasTuple(vector<Value const*> data, size_t const numKeys) const
-    {
-        size_t totalSize = 0;
-        for(size_t i=0; i<numKeys; ++i)
-        {
-            totalSize+=data[i]->size();
-        }
-        if(_hashBuf.size() < totalSize)
-        {
-            _hashBuf.resize(totalSize);
-        }
-        char* ch = &_hashBuf[0];
-        for(size_t i =0; i<numKeys; ++i)
-        {
-            memcpy(ch, data[i]->data(), data[i]->size());
-            ch += data[i]->size();
-        }
-        return hasData(&_hashBuf[0], totalSize);
-    }
-
-    void globalExchange(shared_ptr<Query>& query)
-    {
-        /*
-         * The bloom filters are sufficiently large (4MB each?), so we use two-phase messaging to save memory in case
-         * there are a lot of instances (i.e. 256). This means two rounds of messaging, a little longer to execute but
-         * we won't see a sudden memory spike (only on one instance, not on every instance).
-         */
-        size_t const nInstances = query->getInstancesCount();
-        InstanceID myId = query->getInstanceID();
-        if(!query->isCoordinator())
-        {
-           InstanceID coordinator = query->getCoordinatorID();
-           shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
-           BufSend(coordinator, buf, query);
-           buf = BufReceive(coordinator,query);
-           BitVector incoming(_vec.getBitSize(), buf->getData());
-           _vec = incoming;
-        }
-        else
-        {
-           for(InstanceID i=0; i<nInstances; ++i)
-           {
-              if(i != myId)
-              {
-                  shared_ptr<SharedBuffer> inBuf = BufReceive(i,query);
-                  if(inBuf->getSize() != _vec.getByteSize())
-                  {
-                      throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "exchanging unequal bit vectors";
-                  }
-                  BitVector incoming(_vec.getBitSize(), inBuf->getData());
-                  _vec.orIn(incoming);
-              }
-           }
-           shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
-           for(InstanceID i=0; i<nInstances; ++i)
-           {
-              if(i != myId)
-              {
-                  BufSend(i, buf, query);
-              }
-           }
-        }
-    }
-};
-
-/**
- * First add in tuples from one of the arrays and then filter chunk positions from the other arrays.
- * The *which* template corresponds to the generator / training array
- */
-template <Handedness which>
-class ChunkFilter
-{
-private:
-    size_t _numJoinedDimensions;
-    vector<size_t>     _trainingArrayFields;    //index into the training array tuple
-    vector<size_t>     _filterArrayDimensions;  //index into the filtered array dimensions
-    vector<Coordinate> _filterArrayOrigins;
-    vector<Coordinate> _filterChunkSizes;
-    BloomFilter        _chunkHits;
-
-public:
-    ChunkFilter(Settings const& settings, ArrayDesc const& leftSchema, ArrayDesc const& rightSchema):
-        _numJoinedDimensions(0),
-        _chunkHits(0) //reallocated if actually needed below
-    {
-        size_t const numFilterAtts = which == LEFT ? settings.getNumRightAttrs() : settings.getNumLeftAttrs();
-        size_t const numFilterDims = which == LEFT ? settings.getNumRightDims() : settings.getNumLeftDims();
-        for(size_t i=numFilterAtts; i<numFilterAtts+numFilterDims; ++i)
-        {
-            if(which == LEFT ? settings.isRightKey(i) : settings.isLeftKey(i))
-            {
-                _numJoinedDimensions ++;
-                _trainingArrayFields.push_back( which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i));
-                size_t dimensionId = i - numFilterAtts;
-                _filterArrayDimensions.push_back(dimensionId);
-                DimensionDesc const& dimension = which == LEFT ? rightSchema.getDimensions()[dimensionId] : leftSchema.getDimensions()[dimensionId];
-                _filterArrayOrigins.push_back(dimension.getStartMin());
-                _filterChunkSizes.push_back(dimension.getChunkInterval());
-            }
-        }
-        if(_numJoinedDimensions != 0)
-        {
-            _chunkHits = BloomFilter(settings.getBloomFilterSize());
-        }
-        ostringstream message;
-        message<<"EJ chunk filter initialized dimensions "<<_numJoinedDimensions<<", training fields ";
-        for(size_t i=0; i<_numJoinedDimensions; ++i)
-        {
-            message<<_trainingArrayFields[i]<<" ";
-        }
-        message<<", filter dimensions ";
-        for(size_t i=0; i<_numJoinedDimensions; ++i)
-        {
-            message<<_filterArrayDimensions[i]<<" ";
-        }
-        message<<", filter origins ";
-        for(size_t i=0; i<_numJoinedDimensions; ++i)
-        {
-            message<<_filterArrayOrigins[i]<<" ";
-        }
-        message<<", filter chunk sizes ";
-        for(size_t i=0; i<_numJoinedDimensions; ++i)
-        {
-            message<<_filterChunkSizes[i]<<" ";
-        }
-        LOG4CXX_DEBUG(logger, message.str());
-    }
-
-    void addTuple(vector<Value const*> const& tuple)
-    {
-        if(_numJoinedDimensions==0)
-        {
-            return;
-        }
-        Coordinates input(_numJoinedDimensions);
-        for(size_t i=0; i<_numJoinedDimensions; ++i)
-        {
-            input[i] = ((tuple[_trainingArrayFields[i]]->getInt64() - _filterArrayOrigins[i]) / _filterChunkSizes[i]) * _filterChunkSizes[i] + _filterArrayOrigins[i];
-        }
-        _chunkHits.addData(&(input[0]), _numJoinedDimensions*sizeof(Coordinate));
-    }
-
-    bool containsChunk(Coordinates const& inputChunkPos) const
-    {
-        if(_numJoinedDimensions==0)
-        {
-            return true;
-        }
-        Coordinates input(_numJoinedDimensions);
-        for(size_t i=0; i<_numJoinedDimensions; ++i)
-        {
-            input[i] = inputChunkPos[_filterArrayDimensions[i]];
-        }
-        bool result = _chunkHits.hasData(&input[0], _numJoinedDimensions*sizeof(Coordinate));
-        return result;
-    }
-
-    void globalExchange(shared_ptr<Query>& query)
-    {
-        if(_numJoinedDimensions!=0)
-        {
-            _chunkHits.globalExchange(query);
-        }
-    }
-};
-
-} //namespace equi_join
 
 class PhysicalEquiJoin : public PhysicalOperator
 {
@@ -607,184 +174,48 @@ public:
         }
     }
 
-    template <Handedness which, bool populateChunkFilter, bool preTupled, typename ChunkFilterInstantiation>
-    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilterInstantiation& chunkFilter)
+    template <Handedness which, ReadArrayType arrayType>
+    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilter<which>* chunkFilterToPopulate = NULL)
     {
-        size_t const nAttrs = array->getArrayDesc().getAttributes(true).size();
-        size_t const nDims  = array->getArrayDesc().getDimensions().size();
-        vector<Value const*> tuple ( which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize(), NULL);
-        size_t const numKeys = settings.getNumKeys();
-        vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs);
-        vector<shared_ptr<ConstChunkIterator> > citers(nAttrs);
-        vector<Value> dimVal(nDims);
-        for(size_t i=0; i<nAttrs; ++i)
+        ArrayReader<which, arrayType> reader(array, settings);
+        while(!reader.end())
         {
-            aiters[i] = array->getConstIterator(i);
-        }
-        while(!aiters[0]->end())
-        {
-            for(size_t i=0; i<nAttrs; ++i)
+            vector<Value const*> const& tuple = reader.getTuple();
+            if(chunkFilterToPopulate)
             {
-                citers[i] = aiters[i]->getChunk().getConstIterator();
+                chunkFilterToPopulate->addTuple(tuple);
             }
-            while(!citers[0]->end())
-            {
-                if(!preTupled)
-                {
-                    bool anyNull = false;
-                    for(size_t i=0; i<nAttrs; ++i)
-                    {
-                        ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i);
-                        Value const& v = citers[i]->getItem();
-                        if(idx < (ssize_t) numKeys && v.isNull())
-                        {
-                            anyNull = true;
-                            break;
-                        }
-                        tuple[ idx ] = &v;
-                    }
-                    if(anyNull)
-                    {
-                        for(size_t i=0; i<nAttrs; ++i)
-                        {
-                            ++(*citers[i]);
-                        }
-                        continue;
-                    }
-                    Coordinates const& pos = citers[0]->getPosition();
-                    for(size_t i = 0; i<nDims; ++i)
-                    {
-                        ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i + nAttrs) : settings.mapRightToTuple(i + nAttrs);
-                        if(idx >= 0)
-                        {
-                            dimVal[i].setInt64(pos[i]);
-                            tuple [ idx ] = &dimVal[i];
-                        }
-                    }
-                }
-                else
-                {   //if pretupled; the last attribute is the hash
-                    for(size_t i=0; i<nAttrs-1; ++i)
-                    {
-                        Value const& v = citers[i]->getItem();
-                        tuple[ i ] = &v;
-                    }
-                }
-                if(populateChunkFilter)
-                {
-                    chunkFilter.addTuple(tuple);
-                }
-                table.insert(tuple);
-                for(size_t i=0; i<nAttrs; ++i)
-                {
-                    ++(*citers[i]);
-                }
-            }
-            for(size_t i=0; i<nAttrs; ++i)
-            {
-                ++(*aiters[i]);
-            }
+            table.insert(tuple);
+            reader.next();
         }
     }
 
-    template <Handedness which, bool useChunkFilter, bool arrayPreTupled, typename ChunkFilterInstantiation>
-    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query, Settings const& settings, ChunkFilterInstantiation const& chunkFilter)
+    template <Handedness which, ReadArrayType arrayType>
+    shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query,
+                                       Settings const& settings, ChunkFilter<which> const* chunkFilter = NULL)
     {
         //handedness LEFT means the LEFT array is in table so this reads in reverse
-        size_t const nAttrs = array->getArrayDesc().getAttributes(true).size();
-        size_t const nDims  = array->getArrayDesc().getDimensions().size();
-        vector<Value const*> tuple ( which == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize(), NULL);
-        vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs, NULL);
-        vector<shared_ptr<ConstChunkIterator> > citers(nAttrs, NULL);
-        vector<Value> dimVal(nDims);
-        size_t const numKeys = settings.getNumKeys();
-        JoinHashTable::const_iterator iter = table.getIterator();
+        ArrayReader<which == LEFT ? RIGHT : LEFT, arrayType> reader(array, settings, chunkFilter, NULL);
         ArrayWriter<OUTPUT> result(settings, query, _schema);
-        for(size_t i=0; i<nAttrs; ++i)
+        JoinHashTable::const_iterator iter = table.getIterator();
+        while(!reader.end())
         {
-            aiters[i] = array->getConstIterator(i);
-        }
-        while(!aiters[0]->end())
-        {
-            Coordinates const& chunkPos = aiters[0]->getPosition();
-            if(useChunkFilter && !chunkFilter.containsChunk(chunkPos))
+            vector<Value const*> const& tuple = reader.getTuple();
+            iter.find(tuple);
+            while(!iter.end() && iter.atKeys(tuple))
             {
-                for(size_t i=0; i<nAttrs; ++i)
+                Value const* tablePiece = iter.getTuple();
+                if(which == LEFT)
                 {
-                    ++(*aiters[i]);
-                }
-                continue;
-            }
-            for(size_t i=0; i<nAttrs; ++i)
-            {
-                citers[i] = aiters[i]->getChunk().getConstIterator();
-            }
-            while(!citers[0]->end())
-            {
-                if(!arrayPreTupled)
-                {
-                    bool anyNull = false;
-                    for(size_t i=0; i<nAttrs; ++i)
-                    {
-                        ssize_t idx = which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i);
-                        Value const& v = citers[i]->getItem();
-                        if(idx<((ssize_t)numKeys) && v.isNull())
-                        {
-                            anyNull = true;
-                            break;
-                        }
-                        tuple[ idx ] = &v;
-                    }
-                    if(anyNull)
-                    {
-                        for(size_t i=0; i<nAttrs; ++i)
-                        {
-                            ++(*citers[i]);
-                        }
-                        continue;
-                    }
-                    Coordinates const& pos = citers[0]->getPosition();
-                    for(size_t i =0; i<nDims; ++i)
-                    {
-                        ssize_t idx = which == LEFT ? settings.mapRightToTuple(i + nAttrs) : settings.mapLeftToTuple(i + nAttrs);
-                        if(idx >= 0)
-                        {
-                            dimVal[i].setInt64(pos[i]);
-                            tuple [ idx ] = &dimVal[i];
-                        }
-                    }
+                    result.writeTuple(tablePiece, tuple);
                 }
                 else
-                {   //if pretupled; the last attribute is the hash
-                    for(size_t i=0; i<nAttrs-1; ++i)
-                    {
-                        Value const& v = citers[i]->getItem();
-                        tuple[i] = &v;
-                    }
-                }
-                iter.find(tuple);
-                while(!iter.end() && iter.atKeys(tuple))
                 {
-                    Value const* tablePiece = iter.getTuple();
-                    if(which == LEFT)
-                    {
-                        result.writeTuple(tablePiece, tuple);
-                    }
-                    else
-                    {
-                        result.writeTuple(tuple, tablePiece);
-                    }
-                    iter.nextAtHash();
+                    result.writeTuple(tuple, tablePiece);
                 }
-                for(size_t i=0; i<nAttrs; ++i)
-                {
-                    ++(*citers[i]);
-                }
+                iter.nextAtHash();
             }
-            for(size_t i=0; i<nAttrs; ++i)
-            {
-                ++(*aiters[i]);
-            }
+            reader.next();
         }
         return result.finalize();
     }
@@ -798,112 +229,35 @@ public:
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
         ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
-        readIntoTable<which, true, false> (redistributed, table, settings, filter);
-        return arrayToTableJoin<which, true, false>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter);
+        readIntoTable<which, INPUT> (redistributed, table, settings, &filter);
+        return arrayToTableJoin<which, INPUT>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, &filter);
     }
 
-    enum FilteringBehavior
-    {
-        GENERATE_FILTER,
-        REDUCE_WITH_FILTER
-    };
-
-    template <Handedness which, FilteringBehavior filtering, typename ChunkFilterInstantiation>
+    template <Handedness which>
     shared_ptr<Array> readIntoPreSort(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings,
-                                      ChunkFilterInstantiation& chunkFilter, BloomFilter& bloomFilter)
+                                      ChunkFilter<which>* chunkFilterToGenerate, ChunkFilter<which == LEFT ? RIGHT : LEFT> const* chunkFilterToApply,
+                                      BloomFilter* bloomFilterToGenerate,        BloomFilter const* bloomFilterToApply)
     {
-        ArrayDesc schema = settings.getPreSgSchema <which> (query);
-        ArrayWriter<PRE_SORT> writer(settings, query, schema);
-        size_t const nAttrs = (which == LEFT ?  settings.getNumLeftAttrs() : settings.getNumRightAttrs());
-        size_t const nDims  = (which == LEFT ?  settings.getNumLeftDims()  : settings.getNumRightDims());
-        size_t const tupleSize = (which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
-        size_t const numKeys = settings.getNumKeys();
-        vector<Value const*> tuple ( tupleSize+1, NULL);
-        vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs, NULL);
-        vector<shared_ptr<ConstChunkIterator> > citers(nAttrs, NULL);
-        vector<Value> dimVal(nDims);
-        Value hashVal;
-        tuple[tupleSize] = &hashVal;
+        ArrayReader<which, INPUT> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
+        ArrayWriter<PRE_SORT> writer(settings, query, makePreTupledSchema<which>(settings, query));
         size_t const hashMod = settings.getNumHashBuckets();
         vector<char> hashBuf(64);
-        for(size_t i=0; i<nAttrs; ++i)
+        size_t const numKeys = settings.getNumKeys();
+        Value hashVal;
+        while(!reader.end())
         {
-            aiters[i] = inputArray->getConstIterator(i);
-        }
-        while(!aiters[0]->end())
-        {
-            if(filtering == REDUCE_WITH_FILTER)
+            vector<Value const*> const& tuple = reader.getTuple();
+            if(chunkFilterToGenerate)
             {
-                Coordinates const& chunkPos = aiters[0]->getPosition();
-                if(!chunkFilter.containsChunk(chunkPos))
-                {
-                    for(size_t i=0; i<nAttrs; ++i)
-                    {
-                        ++(*aiters[i]);
-                    }
-                    continue;
-                }
+                chunkFilterToGenerate->addTuple(tuple);
             }
-            for(size_t i=0; i<nAttrs; ++i)
+            if(bloomFilterToGenerate)
             {
-                citers[i] = aiters[i]->getChunk().getConstIterator();
+                bloomFilterToGenerate->addTuple(tuple, numKeys);
             }
-            while(!citers[0]->end())
-            {
-                bool anyNull = false;
-                for(size_t i=0; i<nAttrs; ++i)
-                {
-                    Value const& v = citers[i]->getItem();
-                    ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i);
-                    if(idx<((ssize_t)numKeys) && v.isNull())
-                    {
-                        anyNull = true;
-                        break;
-                    }
-                    tuple[ idx ] = &v;
-                }
-                if(anyNull)
-                {
-                    for(size_t i=0; i<nAttrs; ++i)
-                    {
-                        ++(*citers[i]);
-                    }
-                    continue;
-                }
-                Coordinates const& pos = citers[0]->getPosition();
-                for(size_t i =0; i<nDims; ++i)
-                {
-                    ssize_t idx = which == LEFT ? settings.mapLeftToTuple(i + nAttrs) : settings.mapRightToTuple(i + nAttrs);
-                    if(idx >= 0)
-                    {
-                        dimVal[i].setInt64(pos[i]);
-                        tuple [ idx ] = &dimVal[i];
-                    }
-                }
-                if(filtering == GENERATE_FILTER)
-                {
-                    chunkFilter.addTuple(tuple);
-                    bloomFilter.addTuple(tuple, numKeys);
-                }
-                else if( !bloomFilter.hasTuple(tuple, numKeys))
-                {
-                    for(size_t i=0; i<nAttrs; ++i)
-                    {
-                        ++(*citers[i]);
-                    }
-                    continue;
-                }
-                hashVal.setUint32(JoinHashTable::hashKeys(tuple, numKeys, hashBuf) % hashMod);
-                writer.writeTuple(tuple);
-                for(size_t i=0; i<nAttrs; ++i)
-                {
-                    ++(*citers[i]);
-                }
-            }
-            for(size_t i=0; i<nAttrs; ++i)
-            {
-                ++(*aiters[i]);
-            }
+            hashVal.setUint32( JoinHashTable::hashKeys(tuple, numKeys, hashBuf) % hashMod);
+            writer.writeTupleWithHash(tuple, hashVal);
+            reader.next();
         }
         return writer.finalize();
     }
@@ -926,39 +280,12 @@ public:
     template <Handedness which>
     shared_ptr<Array> sortedToPreSg(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
     {
-        ArrayDesc schema = settings.getPreSgSchema<which>(query);
-        ArrayWriter<SPLIT_ON_HASH> writer(settings, query, schema);
-        size_t const nAttrs = schema.getAttributes().size();
-        vector<Value const*> tuple ( nAttrs, NULL);
-        vector<shared_ptr<ConstArrayIterator> > aiters(nAttrs, NULL);
-        vector<shared_ptr<ConstChunkIterator> > citers(nAttrs, NULL);
-        for(size_t i=0; i<nAttrs; ++i)
+        ArrayWriter<SPLIT_ON_HASH> writer(settings, query, makePreTupledSchema<which>(settings, query));
+        ArrayReader<which, PRE_TUPLED> reader(inputArray, settings);
+        while(!reader.end())
         {
-            aiters[i] = inputArray->getConstIterator(i);
-        }
-        while(!aiters[0]->end())
-        {
-            for(size_t i=0; i<nAttrs; ++i)
-            {
-                citers[i] = aiters[i]->getChunk().getConstIterator();
-            }
-            while(!citers[0]->end())
-            {
-                for(size_t i=0; i<nAttrs; ++i)
-                {
-                    Value const& v = citers[i]->getItem();
-                    tuple[ i ] = &v;
-                }
-                writer.writeTuple(tuple);
-                for(size_t i=0; i<nAttrs; ++i)
-                {
-                    ++(*citers[i]);
-                }
-            }
-            for(size_t i=0; i<nAttrs; ++i)
-            {
-                ++(*aiters[i]);
-            }
+            writer.writeTuple(reader.getTuple());
+            reader.next();
         }
         return writer.finalize();
     }
@@ -1020,8 +347,8 @@ public:
         ArrayWriter<OUTPUT> output(settings, query, _schema);
         vector<AttributeComparator> const& comparators = settings.getKeyComparators();
         size_t const numKeys = settings.getNumKeys();
-        SortedTupleCursor leftCursor (leftSorted, query);
-        SortedTupleCursor rightCursor(rightSorted, query);
+        ArrayReader<LEFT, SORTED>  leftCursor (leftSorted,  settings);
+        ArrayReader<RIGHT, SORTED> rightCursor(rightSorted, settings);
         if(leftCursor.end() || rightCursor.end())
         {
             return output.finalize();
@@ -1120,14 +447,14 @@ public:
         shared_ptr<Array>& first = (which == LEFT ? inputArrays[0] : inputArrays[1]);
         ChunkFilter <which> chunkFilter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
         BloomFilter bloomFilter(settings.getBloomFilterSize());
-        first = readIntoPreSort<which, GENERATE_FILTER>(first, query, settings, chunkFilter, bloomFilter);
+        first = readIntoPreSort<which>(first, query, settings, &chunkFilter, NULL, &bloomFilter, NULL);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<which>(first, query, settings);
         first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
         chunkFilter.globalExchange(query);
         bloomFilter.globalExchange(query);
         shared_ptr<Array>& second = (which == LEFT ? inputArrays[1] : inputArrays[0]);
-        second = readIntoPreSort<(which == LEFT ? RIGHT : LEFT), REDUCE_WITH_FILTER>(second, query, settings, chunkFilter, bloomFilter);
+        second = readIntoPreSort<(which == LEFT ? RIGHT : LEFT)>(second, query, settings, NULL, &chunkFilter, NULL, &bloomFilter);
         second = sortArray(second, query, settings);
         second = sortedToPreSg<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
@@ -1140,8 +467,8 @@ public:
             ArenaPtr operatorArena = this->getArena();
             ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
             JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
-            readIntoTable<which, false, true> (first, table, settings, chunkFilter);
-            return arrayToTableJoin<which, false, true>( second, table, query, settings, chunkFilter);
+            readIntoTable<which, PRE_TUPLED> (first, table, settings);
+            return arrayToTableJoin<which, PRE_TUPLED>( second, table, query, settings);
         }
         else if(secondSize < settings.getHashJoinThreshold())
         {
@@ -1149,8 +476,8 @@ public:
             ArenaPtr operatorArena = this->getArena();
             ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
             JoinHashTable table(settings, hashArena, which == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize());
-            readIntoTable<(which == LEFT ? RIGHT : LEFT), false, true> (second, table, settings, chunkFilter);
-            return arrayToTableJoin<(which == LEFT ? RIGHT : LEFT), false, true>( first, table, query, settings, chunkFilter);
+            readIntoTable<(which == LEFT ? RIGHT : LEFT), PRE_TUPLED> (second, table, settings);
+            return arrayToTableJoin<(which == LEFT ? RIGHT : LEFT), PRE_TUPLED>( first, table, query, settings);
         }
         else
         {

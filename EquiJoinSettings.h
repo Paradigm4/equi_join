@@ -630,7 +630,6 @@ private:
         LOG4CXX_DEBUG(logger, "RJN keys "<<output.str().c_str());
     }
 
-
 public:
     size_t getNumKeys() const
     {
@@ -700,6 +699,11 @@ public:
         return static_cast<size_t>(_rightMapToTuple[i]) < _numKeys;
     }
 
+    bool isKeyNullable(size_t const keyIdx) const
+    {
+        return _keyNullable[keyIdx];
+    }
+
     ssize_t mapLeftToTuple(size_t const leftField) const
     {
         return _leftMapToTuple[leftField];
@@ -727,98 +731,6 @@ public:
     bool keepDimensions() const
     {
         return _keepDimensions;
-    }
-
-    ArrayDesc getOutputSchema(shared_ptr< Query> query, string const name = "") const
-    {
-        Attributes outputAttributes(getNumOutputAttrs());
-        for(AttributeID i =0; i<_numLeftAttrs; ++i)
-        {
-            AttributeDesc const& input = _leftSchema.getAttributes(true)[i];
-            AttributeID destinationId = mapLeftToOutput(i);
-            uint16_t flags = input.getFlags();
-            if(isLeftKey(i) && _keyNullable[destinationId] )
-            {
-                flags |= AttributeDesc::IS_NULLABLE;
-            }
-            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
-        }
-        for(size_t i =0; i<_numLeftDims; ++i)
-        {
-            ssize_t destinationId = mapLeftToOutput(i + _numLeftAttrs);
-            if(destinationId < 0)
-            {
-                continue;
-            }
-            DimensionDesc const& inputDim = _leftSchema.getDimensions()[i];
-            uint16_t flags = 0;
-            if(isLeftKey(i + _numLeftAttrs) && _keyNullable[destinationId]) //is it joined with a nullable attribute?
-            {
-                flags = AttributeDesc::IS_NULLABLE;
-            }
-            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, flags, 0);
-        }
-        for(AttributeID i =0; i<_numRightAttrs; ++i)
-        {
-            if(isRightKey(i))
-            {
-                continue;
-            }
-            AttributeDesc const& input = _rightSchema.getAttributes(true)[i];
-            AttributeID destinationId = mapRightToOutput(i);
-            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), input.getFlags(), 0);
-        }
-        for(size_t i =0; i<_numRightDims; ++i)
-        {
-            ssize_t destinationId = mapRightToOutput(i + _numRightAttrs);
-            if(destinationId < 0 || isRightKey(i + _numRightAttrs))
-            {
-                continue;
-            }
-            DimensionDesc const& inputDim = _rightSchema.getDimensions()[i];
-            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
-        }
-        outputAttributes = addEmptyTagAttribute(outputAttributes);
-        Dimensions outputDimensions;
-        outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
-        outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc(name.size() == 0 ? "equi_join" : name, outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
-    }
-
-    template <Handedness which>
-    ArrayDesc getPreSgSchema(shared_ptr< Query> query) const
-    {
-        size_t const numAttrs = ( which == LEFT ? _leftTupleSize : _rightTupleSize) + 1; //plus hash
-        Attributes outputAttributes(numAttrs);
-        outputAttributes[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0,0);
-        ArrayDesc const& inputSchema = ( which == LEFT ? _leftSchema : _rightSchema);
-        for(AttributeID i = 0; i < (which == LEFT ? _numLeftAttrs : _numRightAttrs); ++i)
-        {
-            AttributeDesc const& input = inputSchema.getAttributes(true)[i];
-            AttributeID destinationId = (which == LEFT ? mapLeftToTuple(i) : mapRightToTuple(i));
-            uint16_t flags = input.getFlags();
-            if( (which == LEFT ? isLeftKey(i) : isRightKey(i)) && _keyNullable[destinationId] )
-            {
-                flags |= AttributeDesc::IS_NULLABLE;
-            }
-            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
-        }
-        for(size_t i = 0; i< (which == LEFT ? _numLeftDims : _numRightDims); ++i )
-        {
-            ssize_t destinationId = (which == LEFT ? mapLeftToTuple(i + _numLeftAttrs) : mapRightToTuple(i + _numRightAttrs));
-            if(destinationId < 0)
-            {
-                continue;
-            }
-            DimensionDesc const& inputDim = inputSchema.getDimensions()[i];
-            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
-        }
-        outputAttributes = addEmptyTagAttribute(outputAttributes);
-        Dimensions outputDimensions;
-        outputDimensions.push_back(DimensionDesc("dst_instance_id", 0, _numInstances-1,             1,         0));
-        outputDimensions.push_back(DimensionDesc("src_instance_id", 0, _numInstances-1,             1,         0));
-        outputDimensions.push_back(DimensionDesc("value_no",        0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc("equi_join_state" , outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
     }
 
     vector <AttributeComparator> const& getKeyComparators() const
@@ -849,6 +761,78 @@ public:
     shared_ptr<Expression> const& getFilterExpression() const
     {
         return _filterExpression;
+    }
+
+    ArrayDesc const& getLeftSchema() const
+    {
+        return _leftSchema;
+    }
+
+    ArrayDesc const& getRightSchema() const
+    {
+        return _rightSchema;
+    }
+
+    ArrayDesc getOutputSchema(shared_ptr< Query> query)
+    {
+        Attributes outputAttributes(getNumOutputAttrs());
+        ArrayDesc const& leftSchema = getLeftSchema();
+        size_t const numLeftAttrs = getNumLeftAttrs();
+        size_t const numLeftDims  = getNumLeftDims();
+        ArrayDesc const& rightSchema = getRightSchema();
+        size_t const numRightAttrs = getNumRightAttrs();
+        size_t const numRightDims  = getNumRightDims();
+        for(AttributeID i =0; i<numLeftAttrs; ++i)
+        {
+            AttributeDesc const& input = leftSchema.getAttributes(true)[i];
+            AttributeID destinationId = mapLeftToOutput(i);
+            uint16_t flags = input.getFlags();
+            if(isLeftKey(i) && isKeyNullable(destinationId) )
+            {
+                flags |= AttributeDesc::IS_NULLABLE;
+            }
+            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
+        }
+        for(size_t i =0; i<numLeftDims; ++i)
+        {
+            ssize_t destinationId = mapLeftToOutput(i + numLeftAttrs);
+            if(destinationId < 0)
+            {
+                continue;
+            }
+            DimensionDesc const& inputDim = leftSchema.getDimensions()[i];
+            uint16_t flags = 0;
+            if(isLeftKey(i + _numLeftAttrs) && isKeyNullable(destinationId)) //is it joined with a nullable attribute?
+            {
+                flags = AttributeDesc::IS_NULLABLE;
+            }
+            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, flags, 0);
+        }
+        for(AttributeID i =0; i<numRightAttrs; ++i)
+        {
+            if(isRightKey(i)) //already in the schema
+            {
+                continue;
+            }
+            AttributeDesc const& input = rightSchema.getAttributes(true)[i];
+            AttributeID destinationId = mapRightToOutput(i);
+            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), input.getFlags(), 0);
+        }
+        for(size_t i =0; i<numRightDims; ++i)
+        {
+            ssize_t destinationId = mapRightToOutput(i + _numRightAttrs);
+            if(destinationId < 0 || isRightKey(i + _numRightAttrs))
+            {
+                continue;
+            }
+            DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
+            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
+        }
+        outputAttributes = addEmptyTagAttribute(outputAttributes);
+        Dimensions outputDimensions;
+        outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
+        outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
+        return ArrayDesc("equi_join", outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
     }
 };
 
