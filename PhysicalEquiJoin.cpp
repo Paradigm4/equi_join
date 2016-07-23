@@ -80,98 +80,225 @@ public:
         return result;
     }
 
-    size_t findSizeLowerBound(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings, size_t const sizeLimit)
+    size_t globalComputeExactArraySize(shared_ptr<Array> &input, shared_ptr<Query>& query)
     {
-        size_t result = 0;
-        ArrayDesc const& inputDesc = input->getArrayDesc();
-        size_t const nAttrs = inputDesc.getAttributes().size();
-        if(input->isMaterialized())
+        size_t size =  computeExactArraySize(input, query);
+        size_t const nInstances = query->getInstancesCount();
+        InstanceID myId = query->getInstanceID();
+        std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
+        *((size_t*) buf->getData()) = size;
+        for(InstanceID i=0; i<nInstances; i++)
         {
-            result = computeExactArraySize(input,query);
-            if(result > sizeLimit)
-            {
-                return sizeLimit;
-            }
-        }
-        else
-        {
-            size_t cellSize = PhysicalBoundaries::getCellSizeBytes(inputDesc.getAttributes());
-            shared_ptr<ConstArrayIterator> iter = input->getConstIterator(nAttrs-1);
-            while(!iter->end())
-            {
-                result += iter->getChunk().count() * cellSize;
-                if(result > sizeLimit)
-                {
-                    return sizeLimit;
-                }
-                ++(*iter);
-            }
-        }
-        return result;
-    }
-
-    size_t globalFindSizeLowerBound(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings, size_t const sizeLimit)
-    {
-       size_t localSize = findSizeLowerBound(input,query,settings,sizeLimit);
-       size_t const nInstances = query->getInstancesCount();
-       InstanceID myId = query->getInstanceID();
-       std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
-       *((size_t*) buf->getData()) = localSize;
-       for(InstanceID i=0; i<nInstances; i++)
-       {
            if(i != myId)
            {
                BufSend(i, buf, query);
            }
-       }
-       for(InstanceID i=0; i<nInstances; i++)
-       {
+        }
+        for(InstanceID i=0; i<nInstances; i++)
+        {
            if(i != myId)
            {
                buf = BufReceive(i,query);
                size_t otherInstanceSize = *((size_t*) buf->getData());
-               localSize += otherInstanceSize;
+               size += otherInstanceSize;
            }
-       }
-       return localSize;
+        }
+        return size;
     }
 
-    Settings::algorithm pickAlgorithm(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
+    /**
+     * If all nodes call this with true - return true.
+     * Otherwise, return false.
+     */
+    bool agreeOnBoolean(bool value, shared_ptr<Query>& query)
     {
-        if(settings.algorithmSet()) //user override
+        std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(bool)));
+        InstanceID myId = query->getInstanceID();
+        *((bool*) buf->getData()) = value;
+        for(InstanceID i=0; i<query->getInstancesCount(); i++)
         {
-            return settings.getAlgorithm();
+            if(i != myId)
+            {
+                BufSend(i, buf, query);
+            }
         }
+        for(InstanceID i=0; i<query->getInstancesCount(); i++)
+        {
+            if(i != myId)
+            {
+                buf = BufReceive(i,query);
+                bool otherInstanceVal = *((bool*) buf->getData());
+                value = value && otherInstanceVal;
+            }
+        }
+        return value;
+    }
+
+    struct PreScanResult
+    {
+        bool finishedLeft;
+        bool finishedRight;
+        size_t leftSizeEstimate;
+        size_t rightSizeEstimate;
+        PreScanResult():
+            finishedLeft(false),
+            finishedRight(false),
+            leftSizeEstimate(0),
+            rightSizeEstimate(0)
+        {}
+    };
+
+    PreScanResult localPreScan(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> const& query, Settings const& settings)
+    {
+        LOG4CXX_DEBUG(logger, "EJ starting local prescan");
         if(inputArrays[0]->getSupportedAccess() == Array::SINGLE_PASS)
         {
             LOG4CXX_DEBUG(logger, "EJ ensuring left random access");
             inputArrays[0] = ensureRandomAccess(inputArrays[0], query);
         }
-        size_t leftSize = globalFindSizeLowerBound(inputArrays[0], query, settings, settings.getHashJoinThreshold());
-        LOG4CXX_DEBUG(logger, "EJ left size "<<leftSize);
         if(inputArrays[1]->getSupportedAccess() == Array::SINGLE_PASS)
         {
             LOG4CXX_DEBUG(logger, "EJ ensuring right random access");
             inputArrays[1] = ensureRandomAccess(inputArrays[1], query); //TODO: well, after this nasty thing we can know the exact size
         }
-        size_t rightSize = globalFindSizeLowerBound(inputArrays[1], query, settings, settings.getHashJoinThreshold());
-        LOG4CXX_DEBUG(logger, "EJ right size "<<rightSize);
-        if(leftSize < settings.getHashJoinThreshold())
+        ArrayDesc const& leftDesc  = inputArrays[0]->getArrayDesc();
+        ArrayDesc const& rightDesc = inputArrays[1]->getArrayDesc();
+        size_t leftCellSize  = PhysicalBoundaries::getCellSizeBytes(makePreTupledSchema<LEFT> (settings, query).getAttributes());
+        size_t rightCellSize = PhysicalBoundaries::getCellSizeBytes(makePreTupledSchema<RIGHT>(settings, query).getAttributes());
+        shared_ptr<ConstArrayIterator> laiter = inputArrays[0]->getConstIterator(leftDesc.getAttributes().size()-1);
+        shared_ptr<ConstArrayIterator> raiter = inputArrays[1]->getConstIterator(rightDesc.getAttributes().size()-1);
+        size_t leftSize =0, rightSize =0;
+        size_t const threshold = settings.getHashJoinThreshold();
+        while(leftSize < threshold && rightSize < threshold && !laiter->end() && !raiter->end())
+        {
+            leftSize  += laiter->getChunk().count() * leftCellSize;
+            rightSize += raiter->getChunk().count() * rightCellSize;
+            ++(*laiter);
+            ++(*raiter);
+        }
+        if(laiter->end())
+        {
+            while(!raiter->end() && rightSize<threshold)
+            {
+                rightSize += raiter->getChunk().count() * rightCellSize;
+                ++(*raiter);
+            }
+        }
+        if(raiter->end())
+        {
+            while(!laiter->end() && leftSize<threshold)
+            {
+                leftSize += laiter->getChunk().count() * leftCellSize;
+                ++(*laiter);
+            }
+        }
+        PreScanResult result;
+        if(laiter->end())
+        {
+            result.finishedLeft=true;
+        }
+        if(raiter->end())
+        {
+            result.finishedRight=true;
+        }
+        result.leftSizeEstimate =leftSize;
+        result.rightSizeEstimate=rightSize;
+        LOG4CXX_DEBUG(logger, "EJ prescan complete leftFinished "<<result.finishedLeft<<" rightFinished "<< result.finishedRight<<" leftSize "<<result.leftSizeEstimate
+                              <<" rightSize "<<result.rightSizeEstimate);
+        return result;
+    }
+
+    void globalPreScan(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query>& query, Settings const& settings,
+                       size_t& leftFinished, size_t& rightFinished, size_t& leftSizeEst, size_t& rightSizeEst)
+    {
+        leftFinished = 0;
+        rightFinished = 0;
+        leftSizeEst = 0;
+        rightSizeEst = 0;
+        PreScanResult localResult = localPreScan(inputArrays, query, settings);
+        if(localResult.finishedLeft)
+        {
+            leftFinished++;
+        }
+        if(localResult.finishedRight)
+        {
+            rightFinished++;
+        }
+        leftSizeEst+=localResult.leftSizeEstimate;
+        rightSizeEst+=localResult.rightSizeEstimate;
+        shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(PreScanResult)));
+        InstanceID myId = query->getInstanceID();
+        *((PreScanResult*) buf->getData()) = localResult;
+        for(InstanceID i=0; i<query->getInstancesCount(); i++)
+        {
+            if(i != myId)
+            {
+                BufSend(i, buf, query);
+            }
+        }
+        for(InstanceID i=0; i<query->getInstancesCount(); i++)
+        {
+            if(i != myId)
+            {
+                buf = BufReceive(i,query);
+                PreScanResult otherInstanceResult = *((PreScanResult*) buf->getData());
+                if(otherInstanceResult.finishedLeft)
+                {
+                    leftFinished++;
+                }
+                if(otherInstanceResult.finishedRight)
+                {
+                    rightFinished++;
+                }
+                leftSizeEst+=otherInstanceResult.leftSizeEstimate;
+                rightSizeEst+=otherInstanceResult.rightSizeEstimate;
+            }
+        }
+    }
+
+    Settings::algorithm pickAlgorithm(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query>& query, Settings const& settings)
+    {
+        if(settings.algorithmSet()) //user override
+        {
+            return settings.getAlgorithm();
+        }
+        size_t const nInstances = query->getInstancesCount();
+        size_t const hashJoinThreshold = settings.getHashJoinThreshold();
+        bool leftMaterialized = agreeOnBoolean(inputArrays[0]->isMaterialized(), query);
+        size_t exactLeftSize  = leftMaterialized ? globalComputeExactArraySize(inputArrays[0], query) : -1;
+        LOG4CXX_DEBUG(logger, "EJ left materialized "<<leftMaterialized<< " exact left size "<<exactLeftSize);
+        if(leftMaterialized && exactLeftSize < hashJoinThreshold)
         {
             return Settings::HASH_REPLICATE_LEFT;
         }
-        else if(rightSize < settings.getHashJoinThreshold())
+        bool rightMaterialized = agreeOnBoolean(inputArrays[1]->isMaterialized(), query);
+        size_t exactRightSize = rightMaterialized ? globalComputeExactArraySize(inputArrays[1], query) : -1;
+        LOG4CXX_DEBUG(logger, "EJ right materialized "<<rightMaterialized<< " exact right size "<<exactRightSize);
+        if(rightMaterialized && exactRightSize < hashJoinThreshold)
         {
             return Settings::HASH_REPLICATE_RIGHT;
         }
-        else if(leftSize < rightSize)
+        if(leftMaterialized && rightMaterialized)
         {
-            return Settings::MERGE_LEFT_FIRST;
+            return exactLeftSize < exactRightSize ? Settings::MERGE_LEFT_FIRST : Settings::MERGE_RIGHT_FIRST;
         }
-        else
+        size_t leftArraysFinished =0;
+        size_t rightArraysFinished=0;
+        size_t leftSizeEst = 0;
+        size_t rightSizeEst =0;
+        globalPreScan(inputArrays, query, settings, leftArraysFinished, rightArraysFinished, leftSizeEst, rightSizeEst);
+        LOG4CXX_DEBUG(logger, "EJ globla prescan complete leftFinished "<<leftArraysFinished<<" rightFinished "<< rightArraysFinished<<" leftSizeEst "<<leftSizeEst<<
+                      " rightSizeEst "<<rightSizeEst);
+        if(leftArraysFinished == nInstances && leftSizeEst < hashJoinThreshold)
         {
-            return Settings::MERGE_RIGHT_FIRST;
+            return Settings::HASH_REPLICATE_LEFT;
         }
+        if(rightArraysFinished == nInstances && rightSizeEst < hashJoinThreshold)
+        {
+            return Settings::HASH_REPLICATE_RIGHT;
+        }
+        //~~~ I dunno, Richard Parker, what do you think?
+        return leftArraysFinished < rightArraysFinished ? Settings::MERGE_RIGHT_FIRST : Settings::MERGE_LEFT_FIRST;
     }
 
     template <Handedness which, ReadArrayType arrayType>
