@@ -101,9 +101,6 @@ enum Handedness
     RIGHT
 };
 
-/*
- * Settings for the grouped_aggregate operator.
- */
 class Settings
 {
 public:

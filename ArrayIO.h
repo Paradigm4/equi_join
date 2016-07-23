@@ -540,9 +540,9 @@ public:
         writeTuple(_tuplePlaceholder);
     }
 
-    //combine two tuples; see getValueFromTuple in JoinHashTable
-    template <typename VALUE_SET_1, typename VALUE_SET_2>
-    void writeTuple(VALUE_SET_1 const& left, VALUE_SET_2 const& right)
+    //combine two tuples (i.e. join); see getValueFromTuple in JoinHashTable
+    template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
+    void writeTuple(TUPLE_TYPE_1 const& left, TUPLE_TYPE_2 const& right)
     {
         for(size_t i=0; i<_numAttributes; ++i)
         {

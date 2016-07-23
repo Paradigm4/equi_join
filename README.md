@@ -1,4 +1,4 @@
-# equi_join [Under Construction]
+# equi_join
 Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. The objective of the operator is to make joining of various diverse datasets easier and more performant. Traditionally, DBMS engines use the optimizer to estimate the sizes of joined structures and choose an algorithm; SciDB aims to get there in the future. For now, this operator uses adaptive heurisitics instead. It examines the inputs, using some pre-scanning if needed, and picks a reasonably good code path.
 
 ## Examples
