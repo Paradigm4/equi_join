@@ -196,7 +196,7 @@ public:
     {
         //handedness LEFT means the LEFT array is in table so this reads in reverse
         ArrayReader<which == LEFT ? RIGHT : LEFT, arrayType> reader(array, settings, chunkFilter, NULL);
-        ArrayWriter<OUTPUT> result(settings, query, _schema);
+        ArrayWriter<WRITE_OUTPUT> result(settings, query, _schema);
         JoinHashTable::const_iterator iter = table.getIterator();
         while(!reader.end())
         {
@@ -229,8 +229,8 @@ public:
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
         ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
-        readIntoTable<which, INPUT> (redistributed, table, settings, &filter);
-        return arrayToTableJoin<which, INPUT>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, &filter);
+        readIntoTable<which, READ_INPUT> (redistributed, table, settings, &filter);
+        return arrayToTableJoin<which, READ_INPUT>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, &filter);
     }
 
     template <Handedness which>
@@ -238,8 +238,8 @@ public:
                                       ChunkFilter<which>* chunkFilterToGenerate, ChunkFilter<which == LEFT ? RIGHT : LEFT> const* chunkFilterToApply,
                                       BloomFilter* bloomFilterToGenerate,        BloomFilter const* bloomFilterToApply)
     {
-        ArrayReader<which, INPUT> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
-        ArrayWriter<PRE_SORT> writer(settings, query, makePreTupledSchema<which>(settings, query));
+        ArrayReader<which, READ_INPUT> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
+        ArrayWriter<WRITE_TUPLED> writer(settings, query, makePreTupledSchema<which>(settings, query));
         size_t const hashMod = settings.getNumHashBuckets();
         vector<char> hashBuf(64);
         size_t const numKeys = settings.getNumKeys();
@@ -280,8 +280,8 @@ public:
     template <Handedness which>
     shared_ptr<Array> sortedToPreSg(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
     {
-        ArrayWriter<SPLIT_ON_HASH> writer(settings, query, makePreTupledSchema<which>(settings, query));
-        ArrayReader<which, PRE_TUPLED> reader(inputArray, settings);
+        ArrayWriter<WRITE_SPLIT_ON_HASH> writer(settings, query, makePreTupledSchema<which>(settings, query));
+        ArrayReader<which, READ_TUPLED> reader(inputArray, settings);
         while(!reader.end())
         {
             writer.writeTuple(reader.getTuple());
@@ -290,65 +290,13 @@ public:
         return writer.finalize();
     }
 
-    bool keysLess(vector<Value const*> const& left, vector<Value const*> const& right, vector <AttributeComparator> const& keyComparators, size_t const numKeys)
-    {
-        for(size_t i =0; i<numKeys; ++i)
-        {
-           Value const& v1 = *(left[i]);
-           Value const& v2 = *(right[i]);
-           if(keyComparators[i](v1, v2))
-           {
-               return true;
-           }
-           else if( v1 == v2 )
-           {
-               continue;
-           }
-           else
-           {
-               return false;
-           }
-        }
-        return false;
-    }
-
-    bool keysEqual(vector<Value const*> const& left, vector<Value const*> const& right, size_t const numKeys)
-    {
-        for(size_t i =0; i<numKeys; ++i)
-        {
-            Value const& v1 = *(left[i]);
-            Value const& v2 = *(right[i]);
-            if(v1.size() == v2.size()  &&  memcmp(v1.data(), v2.data(), v1.size()) == 0)
-            {
-                continue;
-            }
-            return false;
-        }
-        return true;
-    }
-
-    bool keysEqual(vector<Value const*> const& left, vector<Value> const& right, size_t const numKeys)
-    {
-        for(size_t i =0; i<numKeys; ++i)
-        {
-            Value const& v1 = *(left[i]);
-            Value const& v2 = (right[i]);
-            if(v1.size() == v2.size()  &&  memcmp(v1.data(), v2.data(), v1.size()) == 0)
-            {
-                continue;
-            }
-            return false;
-        }
-        return true;
-    }
-
     shared_ptr<Array> localSortedMergeJoin(shared_ptr<Array>& leftSorted, shared_ptr<Array>& rightSorted, shared_ptr<Query>& query, Settings const& settings)
     {
-        ArrayWriter<OUTPUT> output(settings, query, _schema);
+        ArrayWriter<WRITE_OUTPUT> output(settings, query, _schema);
         vector<AttributeComparator> const& comparators = settings.getKeyComparators();
         size_t const numKeys = settings.getNumKeys();
-        ArrayReader<LEFT, SORTED>  leftCursor (leftSorted,  settings);
-        ArrayReader<RIGHT, SORTED> rightCursor(rightSorted, settings);
+        ArrayReader<LEFT, READ_SORTED>  leftCursor (leftSorted,  settings);
+        ArrayReader<RIGHT, READ_SORTED> rightCursor(rightSorted, settings);
         if(leftCursor.end() || rightCursor.end())
         {
             return output.finalize();
@@ -385,7 +333,7 @@ public:
             {
                 break;
             }
-            while (!rightCursor.end() && rightHash == leftHash && keysLess(*rightTuple, *leftTuple, comparators, numKeys) )
+            while (!rightCursor.end() && rightHash == leftHash && JoinHashTable::keysLess(*rightTuple, *leftTuple, comparators, numKeys) )
             {
                 rightCursor.next();
                 if(!rightCursor.end())
@@ -409,7 +357,7 @@ public:
             }
             previousRightIdx = rightCursor.getIdx();
             bool first = true;
-            while(!rightCursor.end() && rightHash == leftHash && keysEqual(*leftTuple, *rightTuple, numKeys))
+            while(!rightCursor.end() && rightHash == leftHash && JoinHashTable::keysEqual(*leftTuple, *rightTuple, numKeys))
             {
                 if(first)
                 {
@@ -431,7 +379,7 @@ public:
             if(!leftCursor.end())
             {
                 leftTuple = &leftCursor.getTuple();
-                if(keysEqual(*leftTuple, previousLeftTuple, numKeys) && !first)
+                if(JoinHashTable::keysEqual( &(previousLeftTuple[0]), *leftTuple, numKeys) && !first)
                 {
                     rightCursor.setIdx(previousRightIdx);
                     rightTuple = &rightCursor.getTuple();
@@ -442,7 +390,7 @@ public:
     }
 
     template <Handedness which>
-    shared_ptr<Array> mergeJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
+    shared_ptr<Array> globalMergeJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
         shared_ptr<Array>& first = (which == LEFT ? inputArrays[0] : inputArrays[1]);
         ChunkFilter <which> chunkFilter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
@@ -467,8 +415,8 @@ public:
             ArenaPtr operatorArena = this->getArena();
             ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
             JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
-            readIntoTable<which, PRE_TUPLED> (first, table, settings);
-            return arrayToTableJoin<which, PRE_TUPLED>( second, table, query, settings);
+            readIntoTable<which, READ_TUPLED> (first, table, settings);
+            return arrayToTableJoin<which, READ_TUPLED>( second, table, query, settings);
         }
         else if(secondSize < settings.getHashJoinThreshold())
         {
@@ -476,8 +424,8 @@ public:
             ArenaPtr operatorArena = this->getArena();
             ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
             JoinHashTable table(settings, hashArena, which == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize());
-            readIntoTable<(which == LEFT ? RIGHT : LEFT), PRE_TUPLED> (second, table, settings);
-            return arrayToTableJoin<(which == LEFT ? RIGHT : LEFT), PRE_TUPLED>( first, table, query, settings);
+            readIntoTable<(which == LEFT ? RIGHT : LEFT), READ_TUPLED> (second, table, settings);
+            return arrayToTableJoin<(which == LEFT ? RIGHT : LEFT), READ_TUPLED>( first, table, query, settings);
         }
         else
         {
@@ -508,12 +456,12 @@ public:
         else if (algo == Settings::MERGE_LEFT_FIRST)
         {
             LOG4CXX_DEBUG(logger, "EJ running merge_left_first");
-            return mergeJoin<LEFT>(inputArrays, query, settings);
+            return globalMergeJoin<LEFT>(inputArrays, query, settings);
         }
         else
         {
             LOG4CXX_DEBUG(logger, "EJ running merge_right_first");
-            return mergeJoin<RIGHT>(inputArrays, query, settings);
+            return globalMergeJoin<RIGHT>(inputArrays, query, settings);
         }
     }
 };

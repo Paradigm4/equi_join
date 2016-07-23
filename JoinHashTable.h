@@ -52,6 +52,16 @@ using std::dynamic_pointer_cast;
 using std::vector;
 using equi_join::Settings;
 
+static Value const& getValueFromTuple(vector<Value const*> const& values, size_t idx)
+{
+    return *(values[idx]);
+}
+
+static Value const& getValueFromTuple(Value const* values, size_t idx)
+{
+    return values[idx];
+}
+
 class JoinHashTable
 {
 private:
@@ -174,13 +184,43 @@ public:
         return hashKeys(keys, numKeys, _hashBuf);
     }
 
-    bool keysLess(Value const* keys1, vector<Value const*> const& keys2) const
+    //Sometimes they're vectors of pointers, sometimes pointers inside vectors; gets a little annoying
+    template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
+    static bool keysEqual(TUPLE_TYPE_1 const& left, TUPLE_TYPE_2 const& right, size_t const numKeys)
     {
-        for(size_t i =0; i<_numKeys; ++i)
+        for(size_t i =0; i<numKeys; ++i)
         {
-           Value const& v1 = keys1[i];
-           Value const& v2 = *(keys2[i]);
-           if(_keyComparators[i](v1, v2))
+            Value const& v1 = getValueFromTuple(left, i);
+            Value const& v2 = getValueFromTuple(right, i);
+            if(v1.size() == v2.size()  &&  memcmp(v1.data(), v2.data(), v1.size()) == 0)
+            {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
+    bool keysEqual(TUPLE_TYPE_1 const& keys1, TUPLE_TYPE_2 const& keys2) const
+    {
+        return keysEqual(keys1, keys2, _numKeys);
+    }
+
+    template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
+    bool tuplesEqual(TUPLE_TYPE_1 const& tuple1, TUPLE_TYPE_2 const& tuple2) const
+    {
+        return keysEqual(tuple1, tuple2, _numAttributes);
+    }
+
+    template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
+    static bool keysLess(TUPLE_TYPE_1 const& left, TUPLE_TYPE_2 const& right, vector <AttributeComparator> const& keyComparators, size_t const numKeys)
+    {
+        for(size_t i =0; i<numKeys; ++i)
+        {
+           Value const& v1 = getValueFromTuple(left, i);
+           Value const& v2 = getValueFromTuple(right, i);
+           if(keyComparators[i](v1, v2))
            {
                return true;
            }
@@ -196,34 +236,10 @@ public:
         return false;
     }
 
-    bool keysEqual(Value const* keys1, vector<Value const*>const& keys2) const
+    template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
+    bool keysLess(TUPLE_TYPE_1 const& left, TUPLE_TYPE_2 const& right) const
     {
-        for(size_t i =0; i<_numKeys; ++i)
-        {
-            Value const& v1 = keys1[i];
-            Value const& v2 = *(keys2[i]);
-            if(v1.size() == v2.size()  &&  memcmp(v1.data(), v2.data(), v1.size()) == 0)
-            {
-                continue;
-            }
-            return false;
-        }
-        return true;
-    }
-
-    bool tuplesEqual(Value const* tuple1, vector<Value const*>const& tuple2) const
-    {
-        for(size_t i =0; i<_numAttributes; ++i)
-        {
-            Value const& v1 = tuple1[i];
-            Value const& v2 = *(tuple2[i]);
-            if(v1.size() == v2.size()  &&  memcmp(v1.data(), v2.data(), v1.size()) == 0)
-            {
-                continue;
-            }
-            return false;
-        }
-        return true;
+        return keysLess(left, right, _keyComparators, _numKeys);
     }
 
 private:

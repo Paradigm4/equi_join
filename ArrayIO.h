@@ -365,9 +365,9 @@ ArrayDesc makePreTupledSchema(Settings const& settings, shared_ptr< Query> const
 
 enum WriteArrayType
 {
-    PRE_SORT,         //first phase:  convert input to tuples and add a hash attribute
-    SPLIT_ON_HASH,    //second phase: split sorted tuples into different chunks based on hash - to send around the cluster
-    OUTPUT            //final phase:  combine left and right tuples into the final result, optionally filtering with the supplied expression
+    WRITE_TUPLED,           //we're writing a tupled array (schema as above), we don't really use the dst_instance_id dimension
+    WRITE_SPLIT_ON_HASH,    //we're writing a tupled array (schema as above), we expect input to be sorted on hash and we assign dst_instance_id chunks based on hash
+    WRITE_OUTPUT            //we're writing the output array (schema as generated in Settings). Here we merge left+right tuples and use the Filter Expression if any.
 };
 
 template<WriteArrayType mode>
@@ -407,19 +407,19 @@ public:
         _query            (query),
         _settings         (settings),
         _tuplePlaceholder (_numAttributes,  NULL),
-        _outputPosition   (mode == OUTPUT ? 2 : 3, 0),
+        _outputPosition   (mode == WRITE_OUTPUT ? 2 : 3, 0),
         _arrayIterators   (_numAttributes+1, NULL),
         _chunkIterators   (_numAttributes+1, NULL),
         _hashBreaks       (_numInstances-1, 0),
         _currentBreak     (0),
-        _filterExpression (mode == OUTPUT ? settings.getFilterExpression() : NULL)
+        _filterExpression (mode == WRITE_OUTPUT ? settings.getFilterExpression() : NULL)
     {
         _boolTrue.setBool(true);
         for(size_t i =0; i<_numAttributes+1; ++i)
         {
             _arrayIterators[i] = _output->getIterator(i);
         }
-        if(mode == OUTPUT)
+        if(mode == WRITE_OUTPUT)
         {
             _outputPosition[0] = _myInstanceId;
             _outputPosition[1] = 0;
@@ -447,7 +447,7 @@ public:
             _outputPosition[0] = 0;
             _outputPosition[1] = _myInstanceId;
             _outputPosition[2] = 0;
-            if(mode == SPLIT_ON_HASH)
+            if(mode == WRITE_SPLIT_ON_HASH)
             {
                 uint32_t break_interval = settings.getNumHashBuckets() / _numInstances;
                 for(size_t i=0; i<_numInstances-1; ++i)
@@ -482,12 +482,12 @@ public:
 
     void writeTuple(vector<Value const*> const& tuple)
     {
-        if(mode == OUTPUT && !tuplePassesFilter(tuple))
+        if(mode == WRITE_OUTPUT && !tuplePassesFilter(tuple))
         {
             return;
         }
         bool newChunk = false;
-        if(mode == SPLIT_ON_HASH)
+        if(mode == WRITE_SPLIT_ON_HASH)
         {
             uint32_t hash = tuple[ _numAttributes-1 ]->getUint32();
             while( static_cast<size_t>(_currentBreak) < _numInstances - 1 && hash > _hashBreaks[_currentBreak] )
@@ -501,7 +501,7 @@ public:
                 newChunk =true;
             }
         }
-        if (_outputPosition[mode == OUTPUT ? 1 : 2] % _chunkSize == 0)
+        if (_outputPosition[mode == WRITE_OUTPUT ? 1 : 2] % _chunkSize == 0)
         {
             newChunk = true;
         }
@@ -523,12 +523,12 @@ public:
         }
         _chunkIterators[_numAttributes]->setPosition(_outputPosition);
         _chunkIterators[_numAttributes]->writeItem(_boolTrue);
-        ++_outputPosition[ mode == OUTPUT ? 1 : 2];
+        ++_outputPosition[ mode == WRITE_OUTPUT ? 1 : 2];
     }
 
     void writeTupleWithHash(vector<Value const*> const& tuple, Value const& hash)
     {
-        if(mode != PRE_SORT)
+        if(mode != WRITE_TUPLED)
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "internal inconsistency";
         }
@@ -540,53 +540,23 @@ public:
         writeTuple(_tuplePlaceholder);
     }
 
-    void writeTuple(vector<Value const*> const& left, Value const* right)
+    //combine two tuples; see getValueFromTuple in JoinHashTable
+    template <typename VALUE_SET_1, typename VALUE_SET_2>
+    void writeTuple(VALUE_SET_1 const& left, VALUE_SET_2 const& right)
     {
         for(size_t i=0; i<_numAttributes; ++i)
         {
             if(i<_leftTupleSize)
             {
-                _tuplePlaceholder[i] = left[i];
+                _tuplePlaceholder[i] = &(getValueFromTuple(left, i));
             }
             else
             {
-                _tuplePlaceholder[i] = right + i - _leftTupleSize + _numKeys;
+                _tuplePlaceholder[i] = &(getValueFromTuple(right, i - _leftTupleSize + _numKeys));
             }
         }
         writeTuple(_tuplePlaceholder);
     }
-
-    void writeTuple(Value const* left, vector<Value const*> const& right)
-    {
-        for(size_t i=0; i<_numAttributes; ++i)
-        {
-            if(i<_leftTupleSize)
-            {
-                _tuplePlaceholder[i] = left + i;
-            }
-            else
-            {
-                _tuplePlaceholder[i] = right[i - _leftTupleSize + _numKeys];
-            }
-        }
-        writeTuple(_tuplePlaceholder);
-   }
-
-   void writeTuple(vector<Value const*> const& left, vector<Value const*> const& right)
-   {
-       for(size_t i=0; i<_numAttributes; ++i)
-       {
-           if(i<_leftTupleSize)
-           {
-               _tuplePlaceholder[i] = left[i];
-           }
-           else
-           {
-               _tuplePlaceholder[i] = right[i - _leftTupleSize + _numKeys];
-           }
-       }
-       writeTuple(_tuplePlaceholder);
-   }
 
     shared_ptr<Array> finalize()
     {
@@ -607,9 +577,10 @@ public:
 
 enum ReadArrayType
 {
-    INPUT,
-    PRE_TUPLED,
-    SORTED
+    READ_INPUT,          //we're reading the input array, however it may be; we reorder attributes and convert dimensions to tuple if needed;
+                         //here we filter join keys for nulls and apply the chunk filter if requested.
+    READ_TUPLED,         //we're reading an array that's been tupled (see above schema)
+    READ_SORTED          //we're reading an array that's been tupled and sorted, so it is 1D, dense and client can seek to a Coordinate of their choice
 };
 
 template<Handedness handedness, ReadArrayType arrayType>
@@ -621,8 +592,8 @@ private:
     size_t const                            _nAttrs;   //internal: corresponds to num actual attributes
     size_t const                            _nDims;
     vector<Value const*>                    _tuple;    //external: corresponds to the left or right tuple desired
-    vector<Value>                           _dimVals;  //for reading dimensions
-    size_t const                            _numKeys;  //
+    vector<Value>                           _dimVals;  //for reading dimensions from INPUT
+    size_t const                            _numKeys;
     Coordinate const                        _chunkSize;
     ChunkFilter<handedness == LEFT ? RIGHT : LEFT> const *const   _readChunkFilter;
     BloomFilter const * const               _readBloomFilter;
@@ -638,26 +609,26 @@ public:
         _settings(settings),
         _nAttrs( input->getArrayDesc().getAttributes(true).size()),
         _nDims ( input->getArrayDesc().getDimensions().size()),
-        _tuple( (handedness == LEFT ? _settings.getLeftTupleSize() : _settings.getRightTupleSize()) + (arrayType == INPUT ? 0 : 1)),
-        _dimVals (arrayType == INPUT ? _nDims : 0),
+        _tuple( (handedness == LEFT ? _settings.getLeftTupleSize() : _settings.getRightTupleSize()) + (arrayType == READ_INPUT ? 0 : 1)),
+        _dimVals (arrayType == READ_INPUT ? _nDims : 0),
         _numKeys(_settings.getNumKeys()),
-        _chunkSize( arrayType == SORTED ? _input->getArrayDesc().getDimensions()[0].getChunkInterval() : -1 ),
+        _chunkSize( arrayType == READ_SORTED ? _input->getArrayDesc().getDimensions()[0].getChunkInterval() : -1 ),
         _readChunkFilter(readChunkFilter),
         _readBloomFilter(readBloomFilter),
-        _currChunkIdx( arrayType == SORTED ? 0 : -1),
+        _currChunkIdx( arrayType == READ_SORTED ? 0 : -1),
         _aiters(_nAttrs),
         _citers(_nAttrs)
     {
         Dimensions const& dims = _input->getArrayDesc().getDimensions();
-        if(arrayType == SORTED && (dims.size()!=1 || dims[0].getStartMin() != 0))
+        if(arrayType == READ_SORTED && (dims.size()!=1 || dims[0].getStartMin() != 0))
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
-        if(arrayType != INPUT && _nAttrs != _tuple.size())
+        if(arrayType != READ_INPUT && _nAttrs != _tuple.size())
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
-        if(arrayType != INPUT && _readChunkFilter)
+        if(arrayType != READ_INPUT && _readChunkFilter)
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
@@ -675,7 +646,7 @@ public:
 private:
     bool setAndCheckTuple()
     {
-        if(arrayType == PRE_TUPLED || arrayType == SORTED)
+        if(arrayType == READ_TUPLED || arrayType == READ_SORTED)
         {
             for(size_t i =0; i<_nAttrs; ++i)
             {
@@ -755,7 +726,7 @@ public:
         }
         while(!_aiters[0]->end())
         {
-            if(arrayType == INPUT && _readChunkFilter)
+            if(arrayType == READ_INPUT && _readChunkFilter)
             {
                 Coordinates const& chunkPos = _aiters[0]->getPosition();
                 if(! _readChunkFilter->containsChunk(chunkPos))
@@ -771,7 +742,7 @@ public:
             {
                 _citers[i] = _aiters[i]->getChunk().getConstIterator();
             }
-            if(arrayType == SORTED)
+            if(arrayType == READ_SORTED)
             {
                 _currChunkIdx = _aiters[0]->getPosition()[0];
             }
@@ -802,7 +773,7 @@ public:
 
     Coordinate getIdx()
     {
-        if(arrayType != SORTED || end())
+        if(arrayType != READ_SORTED || end())
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
@@ -811,7 +782,7 @@ public:
 
     void setIdx(Coordinate idx)
     {
-        if(arrayType != SORTED || idx<0)
+        if(arrayType != READ_SORTED || idx<0)
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
