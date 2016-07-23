@@ -287,7 +287,7 @@ public:
         size_t leftSizeEst = 0;
         size_t rightSizeEst =0;
         globalPreScan(inputArrays, query, settings, leftArraysFinished, rightArraysFinished, leftSizeEst, rightSizeEst);
-        LOG4CXX_DEBUG(logger, "EJ globla prescan complete leftFinished "<<leftArraysFinished<<" rightFinished "<< rightArraysFinished<<" leftSizeEst "<<leftSizeEst<<
+        LOG4CXX_DEBUG(logger, "EJ global prescan complete leftFinished "<<leftArraysFinished<<" rightFinished "<< rightArraysFinished<<" leftSizeEst "<<leftSizeEst<<
                       " rightSizeEst "<<rightSizeEst);
         if(leftArraysFinished == nInstances && leftSizeEst < hashJoinThreshold)
         {
