@@ -176,17 +176,17 @@ public:
             ++(*laiter);
             ++(*raiter);
         }
-        if(laiter->end())
+        if(laiter->end()) //make sure we've scanned at least the same size from both (in case the chunks are differently sized)
         {
-            while(!raiter->end() && rightSize<threshold)
+            while(!raiter->end() && rightSize<leftSize)
             {
                 rightSize += raiter->getChunk().count() * rightCellSize;
                 ++(*raiter);
             }
         }
-        if(raiter->end())
+        else if(raiter->end())
         {
-            while(!laiter->end() && leftSize<threshold)
+            while(!laiter->end() && leftSize<rightSize)
             {
                 leftSize += laiter->getChunk().count() * leftCellSize;
                 ++(*laiter);
