@@ -297,7 +297,7 @@ public:
         {
             return Settings::HASH_REPLICATE_RIGHT;
         }
-        //~~~ I dunno, Richard Parker, what do you think?
+        //~~~ I dunno, Richard Parker, what do you think? Try to start with the thing that was smaller on most instances
         return leftArraysFinished < rightArraysFinished ? Settings::MERGE_RIGHT_FIRST : Settings::MERGE_LEFT_FIRST;
     }
 

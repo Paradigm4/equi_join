@@ -129,6 +129,239 @@ echo "Chapter 8" >> $OUTFILE 2>&1
 iquery -aq "sort(equi_join(right, left, 'left_names=j,c', 'right_names=i,a', 'algorithm=merge_left_first', 'keep_dimensions=0'))"  >> $OUTFILE 2>&1
 iquery -aq "sort(equi_join(right, left, 'left_names=j,c', 'right_ids=~0,0', 'algorithm=merge_left_first', 'keep_dimensions=0' ))"  >> $OUTFILE 2>&1
 
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 9" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0'                                                                                   , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right'                                                 , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left'                                                  , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first'                                                     , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first'                                                    , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'hash_join_threshold=0'                        , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'hash_join_threshold=0'                        , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right', 'keep_dimensions=1'                            , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left',  'keep_dimensions=1'                            , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1'                            , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1'                            , 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=1'        ), a,b,d)" >> $OUTFILE 2>&1
+
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 10" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0'                                                                                   , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right'                                                 , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left'                                                  , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first'                                                     , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first'                                                    , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'hash_join_threshold=0'                        , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'hash_join_threshold=0'                        , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right', 'keep_dimensions=1'                            , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left',  'keep_dimensions=1'                            , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1'                            , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1'                            , 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=1'        ), c,d,b)" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 11" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0'                                                                                  , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_right'                                                , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_left'                                                 , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first'                                                    , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first'                                                   , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first',     'hash_join_threshold=0'                       , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first',    'hash_join_threshold=0'                       , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_right', 'keep_dimensions=T'                           , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_left',  'keep_dimensions=T'                           , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first',     'keep_dimensions=T'                           , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first',    'keep_dimensions=T'                           , 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first',     'keep_dimensions=T',   'hash_join_threshold=0', 'chunk_size=1'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first',    'keep_dimensions=T',   'hash_join_threshold=0', 'chunk_size=1'                )" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 12" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0'                                                                                   , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_right', 'keep_dimensions=0'                            , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_left',  'keep_dimensions=0'                            , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=0'                            , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=0'                            , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=0',    'hash_join_threshold=0', 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=0',    'hash_join_threshold=0', 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_right', 'keep_dimensions=true'                         , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_left',  'keep_dimensions=true'                         , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=true'                         , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=true'                         , 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=true', 'hash_join_threshold=0', 'chunk_size=1'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=true', 'hash_join_threshold=0', 'chunk_size=1'               )" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 13" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1'                                                                                   , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_left', 'keep_dimensions=F'                             , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1 
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_right','keep_dimensions=F'                             , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_left_first',    'keep_dimensions=F'                             , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_right_first',   'keep_dimensions=F'                             , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_left_first',    'keep_dimensions=F',    'hash_join_threshold=0' , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_right_first',   'keep_dimensions=F',    'hash_join_threshold=0' , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_left', 'keep_dimensions=TRUE'                          , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_right','keep_dimensions=TRUE'                          , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_left_first',    'keep_dimensions=TRUE', 'hash_join_threshold=0' , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_right_first',   'keep_dimensions=TRUE', 'hash_join_threshold=0' , 'chunk_size=1'     ), i,a,b,c)" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 14" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0'                                                                                   , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_left', 'keep_dimensions=FALSE'                         , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_right','keep_dimensions=false'                         , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=false'                         , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=false'                         , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=false', 'hash_join_threshold=0', 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=false', 'hash_join_threshold=0', 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_left', 'keep_dimensions=true'                          , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_right','keep_dimensions=TRUE'                          , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=TRUE'                          , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=TRUE'                          , 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=TRUE',  'hash_join_threshold=0', 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=TRUE',  'hash_join_threshold=0', 'chunk_size=1'     ), d,c,a,b)" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 15" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c'                                                                     , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=hash_replicate_left'                                    , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=hash_replicate_right'                                   , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_left_first'                                       , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_right_first'                                      , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_left_first',     'hash_join_threshold=0'          , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_right_first',    'hash_join_threshold=0'          , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=hash_replicate_left', 'keep_dimensions=1'      , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=hash_replicate_right','keep_dimensions=1'      , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'keep_dimensions=1'      , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'keep_dimensions=1'      , 'chunk_size=1'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'hash_join_threshold=0', 'keep_dimensions=1', 'chunk_size=1' ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'hash_join_threshold=0', 'keep_dimensions=1', 'chunk_size=1' ))" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 16" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_names=j,c', 'right_names=i,a', 'algorithm=merge_left_first', 'keep_dimensions=0', 'chunk_size=1'))"  >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_names=j,c', 'right_ids=~0,0', 'algorithm=merge_left_first', 'keep_dimensions=0',  'chunk_size=1' ))"  >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 17" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0'                                                                                   , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right'                                                 , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left'                                                  , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first'                                                     , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first'                                                    , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'hash_join_threshold=0'                        , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'hash_join_threshold=0'                        , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right', 'keep_dimensions=1'                            , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left',  'keep_dimensions=1'                            , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1'                            , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1'                            , 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=2'        ), a,b,d)" >> $OUTFILE 2>&1
+
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 18" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0'                                                                                   , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right'                                                 , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left'                                                  , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first'                                                     , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first'                                                    , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'hash_join_threshold=0'                        , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'hash_join_threshold=0'                        , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_right', 'keep_dimensions=1'                            , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=hash_replicate_left',  'keep_dimensions=1'                            , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1'                            , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1'                            , 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_left_first',     'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=0', 'right_ids=0', 'algorithm=merge_right_first',    'keep_dimensions=1',    'hash_join_threshold=0', 'chunk_size=2'        ), c,d,b)" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 19" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0'                                                                                  , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_right'                                                , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_left'                                                 , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first'                                                    , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first'                                                   , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first',     'hash_join_threshold=0'                       , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first',    'hash_join_threshold=0'                       , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_right', 'keep_dimensions=T'                           , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=hash_replicate_left',  'keep_dimensions=T'                           , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first',     'keep_dimensions=T'                           , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first',    'keep_dimensions=T'                           , 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_left_first',     'keep_dimensions=T',   'hash_join_threshold=0', 'chunk_size=2'                )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,~0', 'algorithm=merge_right_first',    'keep_dimensions=T',   'hash_join_threshold=0', 'chunk_size=2'                )" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 20" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0'                                                                                   , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_right', 'keep_dimensions=0'                            , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_left',  'keep_dimensions=0'                            , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=0'                            , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=0'                            , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=0',    'hash_join_threshold=0', 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=0',    'hash_join_threshold=0', 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_right', 'keep_dimensions=true'                         , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=hash_replicate_left',  'keep_dimensions=true'                         , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=true'                         , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=true'                         , 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_left_first',     'keep_dimensions=true', 'hash_join_threshold=0', 'chunk_size=2'               )" >> $OUTFILE 2>&1
+iquery -aq "equi_join(right, left, 'left_ids=~0,0', 'right_ids=~0,0', 'algorithm=merge_right_first',    'keep_dimensions=true', 'hash_join_threshold=0', 'chunk_size=2'               )" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 21" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1'                                                                                   , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_left', 'keep_dimensions=F'                             , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1 
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_right','keep_dimensions=F'                             , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_left_first',    'keep_dimensions=F'                             , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_right_first',   'keep_dimensions=F'                             , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_left_first',    'keep_dimensions=F',    'hash_join_threshold=0' , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_right_first',   'keep_dimensions=F',    'hash_join_threshold=0' , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_left', 'keep_dimensions=TRUE'                          , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=hash_replicate_right','keep_dimensions=TRUE'                          , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_left_first',    'keep_dimensions=TRUE', 'hash_join_threshold=0' , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_ids=~0', 'right_ids=1', 'algorithm=merge_right_first',   'keep_dimensions=TRUE', 'hash_join_threshold=0' , 'chunk_size=2'     ), i,a,b,c)" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 22" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0'                                                                                   , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_left', 'keep_dimensions=FALSE'                         , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_right','keep_dimensions=false'                         , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=false'                         , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=false'                         , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=false', 'hash_join_threshold=0', 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=false', 'hash_join_threshold=0', 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_left', 'keep_dimensions=true'                          , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=hash_replicate_right','keep_dimensions=TRUE'                          , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=TRUE'                          , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=TRUE'                          , 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_left_first',    'keep_dimensions=TRUE',  'hash_join_threshold=0', 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'algorithm=merge_right_first',   'keep_dimensions=TRUE',  'hash_join_threshold=0', 'chunk_size=2'     ), d,c,a,b)" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 23" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c'                                                                     , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=hash_replicate_left'                                    , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=hash_replicate_right'                                   , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_left_first'                                       , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_right_first'                                      , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_left_first',     'hash_join_threshold=0'          , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a=c', 'algorithm=merge_right_first',    'hash_join_threshold=0'          , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=hash_replicate_left', 'keep_dimensions=1'      , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=hash_replicate_right','keep_dimensions=1'      , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'keep_dimensions=1'      , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'keep_dimensions=1'      , 'chunk_size=2'                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_left_first',    'hash_join_threshold=0', 'keep_dimensions=1', 'chunk_size=2' ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_ids=1', 'right_ids=~0', 'filter:a<>c and j>3', 'algorithm=merge_right_first',   'hash_join_threshold=0', 'keep_dimensions=1', 'chunk_size=2' ))" >> $OUTFILE 2>&1
+
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 24" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_names=j,c', 'right_names=i,a', 'algorithm=merge_left_first', 'keep_dimensions=0', 'chunk_size=2'))"  >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, 'left_names=j,c', 'right_ids=~0,0', 'algorithm=merge_left_first', 'keep_dimensions=0',  'chunk_size=2' ))"  >> $OUTFILE 2>&1
+
+
 
 diff test.out test.expected
 
