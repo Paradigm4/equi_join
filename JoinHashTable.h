@@ -62,6 +62,19 @@ static Value const& getValueFromTuple(Value const* values, size_t idx)
     return values[idx];
 }
 
+template <typename TUPLE_TYPE>
+bool isNullTuple(TUPLE_TYPE const& tuple, size_t const numKeys)
+{
+    for(size_t i=0; i<numKeys; ++i)
+    {
+        if(getValueFromTuple(tuple, i).isNull())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 class JoinHashTable
 {
 private:
@@ -159,12 +172,24 @@ public:
     {}
 
 public:
+    template<bool INCLUDE_NULLS = false> //note: the table does not allow null entries but we can hash null values
     static uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys, vector<char>& buf)
     {
         size_t totalSize = 0;
         for(size_t i =0; i<numKeys; ++i)
         {
-            totalSize += keys[i]->size();
+            if(INCLUDE_NULLS)
+            {
+                totalSize += sizeof(Value::reason);
+                if(!keys[i]->isNull())
+                {
+                    totalSize += keys[i]->size();
+                }
+            }
+            else
+            {
+                totalSize += keys[i]->size();
+            }
         }
         if(buf.size() < totalSize)
         {
@@ -173,8 +198,22 @@ public:
         char* ch = &buf[0];
         for(size_t i =0; i<numKeys; ++i)
         {
-            memcpy(ch, keys[i]->data(), keys[i]->size());
-            ch += keys[i]->size();
+            if(INCLUDE_NULLS)
+            {
+                Value::reason mc = keys[i]->getMissingReason();
+                memcpy(ch, &mc, sizeof(mc));
+                ch += sizeof(mc);
+                if(mc == -1)
+                {
+                    memcpy(ch, keys[i]->data(), keys[i]->size());
+                    ch += keys[i]->size();
+                }
+            }
+            else
+            {
+                memcpy(ch, keys[i]->data(), keys[i]->size());
+                ch += keys[i]->size();
+            }
         }
         return murmur3_32(&buf[0], totalSize);
     }
@@ -437,29 +476,6 @@ public:
                 throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "access past end";
             }
             return _table->keysEqual(getTuple(), keys);
-        }
-
-        void mark()
-        {
-            if(!end())
-            {
-                _mark = _entry;
-                _markHash = _currHash;
-            }
-            else
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "mark past end";
-            }
-        }
-
-        void goToMark()
-        {
-            if(_mark == NULL)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "visit to null mark";
-            }
-            _entry = _mark;
-            _currHash = _markHash;
         }
     };
 

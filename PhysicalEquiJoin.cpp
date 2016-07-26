@@ -267,14 +267,14 @@ public:
         bool leftMaterialized = agreeOnBoolean(inputArrays[0]->isMaterialized(), query);
         size_t exactLeftSize  = leftMaterialized ? globalComputeExactArraySize(inputArrays[0], query) : -1;
         LOG4CXX_DEBUG(logger, "EJ left materialized "<<leftMaterialized<< " exact left size "<<exactLeftSize);
-        if(leftMaterialized && exactLeftSize < hashJoinThreshold)
+        if(leftMaterialized && exactLeftSize < hashJoinThreshold && settings.isLeftOuter() == false)
         {
             return Settings::HASH_REPLICATE_LEFT;
         }
         bool rightMaterialized = agreeOnBoolean(inputArrays[1]->isMaterialized(), query);
         size_t exactRightSize = rightMaterialized ? globalComputeExactArraySize(inputArrays[1], query) : -1;
         LOG4CXX_DEBUG(logger, "EJ right materialized "<<rightMaterialized<< " exact right size "<<exactRightSize);
-        if(rightMaterialized && exactRightSize < hashJoinThreshold)
+        if(rightMaterialized && exactRightSize < hashJoinThreshold && settings.isRightOuter() == false)
         {
             return Settings::HASH_REPLICATE_RIGHT;
         }
@@ -289,11 +289,11 @@ public:
         globalPreScan(inputArrays, query, settings, leftArraysFinished, rightArraysFinished, leftSizeEst, rightSizeEst);
         LOG4CXX_DEBUG(logger, "EJ global prescan complete leftFinished "<<leftArraysFinished<<" rightFinished "<< rightArraysFinished<<" leftSizeEst "<<leftSizeEst<<
                       " rightSizeEst "<<rightSizeEst);
-        if(leftArraysFinished == nInstances && leftSizeEst < hashJoinThreshold)
+        if(leftArraysFinished == nInstances && leftSizeEst < hashJoinThreshold && settings.isLeftOuter() == false)
         {
             return Settings::HASH_REPLICATE_LEFT;
         }
-        if(rightArraysFinished == nInstances && rightSizeEst < hashJoinThreshold)
+        if(rightArraysFinished == nInstances && rightSizeEst < hashJoinThreshold && settings.isRightOuter() == false)
         {
             return Settings::HASH_REPLICATE_RIGHT;
         }
@@ -301,10 +301,14 @@ public:
         return leftArraysFinished < rightArraysFinished ? Settings::MERGE_RIGHT_FIRST : Settings::MERGE_LEFT_FIRST;
     }
 
-    template <Handedness which, ReadArrayType arrayType>
-    void readIntoTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilter<which>* chunkFilterToPopulate = NULL)
+    template <Handedness WHICH, ReadArrayType ARRAY_TYPE>
+    void readIntoHashTable(shared_ptr<Array> & array, JoinHashTable& table, Settings const& settings, ChunkFilter<WHICH>* chunkFilterToPopulate = NULL)
     {
-        ArrayReader<which, arrayType> reader(array, settings);
+        if ((WHICH == LEFT && settings.isLeftOuter()) || (WHICH == RIGHT && settings.isRightOuter()))
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION)<<"internal inconsistency";
+        }
+        ArrayReader<WHICH, ARRAY_TYPE> reader(array, settings);
         while(!reader.end())
         {
             vector<Value const*> const& tuple = reader.getTuple();
@@ -317,56 +321,84 @@ public:
         }
     }
 
-    template <Handedness which, ReadArrayType arrayType>
+    template <Handedness WHICH_IS_IN_TABLE, ReadArrayType ARRAY_TYPE, bool ARRAY_OUTER_JOIN>
     shared_ptr<Array> arrayToTableJoin(shared_ptr<Array>& array, JoinHashTable& table, shared_ptr<Query>& query,
-                                       Settings const& settings, ChunkFilter<which> const* chunkFilter = NULL)
+                                       Settings const& settings, ChunkFilter<WHICH_IS_IN_TABLE> const* chunkFilter = NULL)
     {
         //handedness LEFT means the LEFT array is in table so this reads in reverse
-        ArrayReader<which == LEFT ? RIGHT : LEFT, arrayType> reader(array, settings, chunkFilter, NULL);
+        //ARRAY_OUTER_JOIN means the join is outer on the side of the array. The table doesn't support outer joins, so if we were outer
+        //on the other side, we wouldn't be in this loop.
+        ArrayReader<WHICH_IS_IN_TABLE == LEFT ? RIGHT : LEFT, ARRAY_TYPE, ARRAY_OUTER_JOIN> reader(array, settings, chunkFilter, NULL);
         ArrayWriter<WRITE_OUTPUT> result(settings, query, _schema);
         JoinHashTable::const_iterator iter = table.getIterator();
+        size_t const numKeys = settings.getNumKeys();
         while(!reader.end())
         {
             vector<Value const*> const& tuple = reader.getTuple();
-            iter.find(tuple);
-            while(!iter.end() && iter.atKeys(tuple))
+            if(ARRAY_OUTER_JOIN && isNullTuple(tuple, numKeys))
             {
-                Value const* tablePiece = iter.getTuple();
-                if(which == LEFT)
+                result.writeOuterTuple<WHICH_IS_IN_TABLE == LEFT ? RIGHT : LEFT> (tuple);
+                reader.next();
+                continue;
+            }
+            iter.find(tuple);
+            if (ARRAY_OUTER_JOIN && iter.end())
+            {
+                result.writeOuterTuple<WHICH_IS_IN_TABLE == LEFT ? RIGHT : LEFT> (tuple);
+            }
+            else
+            {
+                while(!iter.end() && iter.atKeys(tuple))
                 {
-                    result.writeTuple(tablePiece, tuple);
+                    Value const* tablePiece = iter.getTuple();
+                    if(WHICH_IS_IN_TABLE == LEFT)
+                    {
+                        result.writeTuple(tablePiece, tuple);
+                    }
+                    else
+                    {
+                        result.writeTuple(tuple, tablePiece);
+                    }
+                    iter.nextAtHash();
                 }
-                else
-                {
-                    result.writeTuple(tuple, tablePiece);
-                }
-                iter.nextAtHash();
             }
             reader.next();
         }
         return result.finalize();
     }
 
-    template <Handedness which>
+    template <Handedness WHICH_REPLICATED>
     shared_ptr<Array> replicationHashJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
-        shared_ptr<Array> redistributed = (which == LEFT ? inputArrays[0] : inputArrays[1]);
+        if((WHICH_REPLICATED == LEFT && settings.isLeftOuter()) || (WHICH_REPLICATED == RIGHT && settings.isRightOuter()))
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
+        }
+        shared_ptr<Array> redistributed = (WHICH_REPLICATED == LEFT ? inputArrays[0] : inputArrays[1]);
         redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query);
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
-        JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
-        ChunkFilter <which> filter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
-        readIntoTable<which, READ_INPUT> (redistributed, table, settings, &filter);
-        return arrayToTableJoin<which, READ_INPUT>( which == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, &filter);
+        JoinHashTable table(settings, hashArena, WHICH_REPLICATED == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
+        shared_ptr<ChunkFilter<WHICH_REPLICATED> >filter;
+        if ((WHICH_REPLICATED == LEFT && !settings.isRightOuter()) || (WHICH_REPLICATED == RIGHT && !settings.isLeftOuter()))
+        {
+            filter.reset(new ChunkFilter<WHICH_REPLICATED>(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc()));
+        }
+        readIntoHashTable<WHICH_REPLICATED, READ_INPUT> (redistributed, table, settings, filter.get());
+        if(settings.isLeftOuter() || settings.isRightOuter())
+        {
+            return arrayToTableJoin<WHICH_REPLICATED, READ_INPUT, true>( WHICH_REPLICATED == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter.get());
+        }
+        return arrayToTableJoin<WHICH_REPLICATED, READ_INPUT, false>( WHICH_REPLICATED == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter.get());
     }
 
-    template <Handedness which>
+    template <Handedness WHICH, bool INCLUDE_NULL_TUPLES = false>
     shared_ptr<Array> readIntoPreSort(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings,
-                                      ChunkFilter<which>* chunkFilterToGenerate, ChunkFilter<which == LEFT ? RIGHT : LEFT> const* chunkFilterToApply,
+                                      ChunkFilter<WHICH>* chunkFilterToGenerate, ChunkFilter<WHICH == LEFT ? RIGHT : LEFT> const* chunkFilterToApply,
                                       BloomFilter* bloomFilterToGenerate,        BloomFilter const* bloomFilterToApply)
     {
-        ArrayReader<which, READ_INPUT> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
-        ArrayWriter<WRITE_TUPLED> writer(settings, query, makePreTupledSchema<which>(settings, query));
+        ArrayReader<WHICH, READ_INPUT, INCLUDE_NULL_TUPLES> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
+        ArrayWriter<WRITE_TUPLED> writer(settings, query, makePreTupledSchema<WHICH>(settings, query));
         size_t const hashMod = settings.getNumHashBuckets();
         vector<char> hashBuf(64);
         size_t const numKeys = settings.getNumKeys();
@@ -382,7 +414,7 @@ public:
             {
                 bloomFilterToGenerate->addTuple(tuple, numKeys);
             }
-            hashVal.setUint32( JoinHashTable::hashKeys(tuple, numKeys, hashBuf) % hashMod);
+            hashVal.setUint32( JoinHashTable::hashKeys<INCLUDE_NULL_TUPLES>(tuple, numKeys, hashBuf) % hashMod);
             writer.writeTupleWithHash(tuple, hashVal);
             reader.next();
         }
@@ -404,11 +436,11 @@ public:
         return sorter.getSortedArray(inputArray, query, tcomp);
     }
 
-    template <Handedness which>
+    template <Handedness WHICH>
     shared_ptr<Array> sortedToPreSg(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
     {
-        ArrayWriter<WRITE_SPLIT_ON_HASH> writer(settings, query, makePreTupledSchema<which>(settings, query));
-        ArrayReader<which, READ_TUPLED> reader(inputArray, settings);
+        ArrayWriter<WRITE_SPLIT_ON_HASH> writer(settings, query, makePreTupledSchema<WHICH>(settings, query));
+        ArrayReader<WHICH, READ_TUPLED> reader(inputArray, settings);
         while(!reader.end())
         {
             writer.writeTuple(reader.getTuple());
@@ -417,149 +449,176 @@ public:
         return writer.finalize();
     }
 
+    template <bool LEFT_OUTER = false, bool RIGHT_OUTER = false>
     shared_ptr<Array> localSortedMergeJoin(shared_ptr<Array>& leftSorted, shared_ptr<Array>& rightSorted, shared_ptr<Query>& query, Settings const& settings)
     {
         ArrayWriter<WRITE_OUTPUT> output(settings, query, _schema);
         vector<AttributeComparator> const& comparators = settings.getKeyComparators();
         size_t const numKeys = settings.getNumKeys();
-        ArrayReader<LEFT, READ_SORTED>  leftCursor (leftSorted,  settings);
-        ArrayReader<RIGHT, READ_SORTED> rightCursor(rightSorted, settings);
-        if(leftCursor.end() || rightCursor.end())
-        {
-            return output.finalize();
-        }
-        vector<Value> previousLeftTuple(numKeys);
+        ArrayReader<LEFT, READ_SORTED>  leftReader (leftSorted,  settings);
+        ArrayReader<RIGHT, READ_SORTED> rightReader(rightSorted, settings);
+        vector<Value> previousLeftKeys(numKeys);
         Coordinate previousRightIdx = -1;
-        vector<Value const*> const* leftTuple = &(leftCursor.getTuple());
-        vector<Value const*> const* rightTuple = &(rightCursor.getTuple());
-        size_t leftTupleSize = settings.getLeftTupleSize();
-        size_t rightTupleSize = settings.getRightTupleSize();
-        while(!leftCursor.end() && !rightCursor.end())
+        size_t const leftTupleSize = settings.getLeftTupleSize();
+        size_t const rightTupleSize = settings.getRightTupleSize();
+        while(!leftReader.end() && !rightReader.end())
         {
+            vector<Value const*> const* leftTuple  = &(leftReader.getTuple());
+            vector<Value const*> const* rightTuple = &(rightReader.getTuple());
+            if(LEFT_OUTER && isNullTuple(*leftTuple, numKeys))
+            {
+                output.writeOuterTuple<LEFT>(*leftTuple);
+                leftReader.next();
+                continue;
+            }
+            else if(RIGHT_OUTER && isNullTuple(*rightTuple, numKeys))
+            {
+                output.writeOuterTuple<RIGHT>(*rightTuple);
+                rightReader.next();
+                continue;
+            }
             uint32_t leftHash = ((*leftTuple)[leftTupleSize])->getUint32();
             uint32_t rightHash =((*rightTuple)[rightTupleSize])->getUint32();
-            while(rightHash < leftHash && !rightCursor.end())
+            if(leftHash < rightHash)
             {
-                rightCursor.next();
-                if(!rightCursor.end())
+                if(LEFT_OUTER)
                 {
-                    rightTuple = &(rightCursor.getTuple());
-                    rightHash =((*rightTuple)[rightTupleSize])->getUint32();
+                    output.writeOuterTuple<LEFT>(*leftTuple);
                 }
-            }
-            if(rightHash > leftHash)
-            {
-                leftCursor.next();
-                if(!leftCursor.end())
-                {
-                    leftTuple = &(leftCursor.getTuple());
-                }
+                leftReader.next();
                 continue;
             }
-            if(rightCursor.end())
+            else if(rightHash < leftHash)
             {
-                break;
-            }
-            while (!rightCursor.end() && rightHash == leftHash && JoinHashTable::keysLess(*rightTuple, *leftTuple, comparators, numKeys) )
-            {
-                rightCursor.next();
-                if(!rightCursor.end())
+                if(RIGHT_OUTER)
                 {
-                    rightTuple = &(rightCursor.getTuple());
-                    rightHash =((*rightTuple)[rightTupleSize])->getUint32();
+                    output.writeOuterTuple<RIGHT>(*rightTuple);
                 }
-            }
-            if(rightCursor.end())
-            {
-                break;
-            }
-            if(rightHash > leftHash)
-            {
-                leftCursor.next();
-                if(!leftCursor.end())
-                {
-                    leftTuple = &(leftCursor.getTuple());
-                }
+                rightReader.next();
                 continue;
             }
-            previousRightIdx = rightCursor.getIdx();
+            else if(JoinHashTable::keysLess(*leftTuple, *rightTuple, comparators, numKeys))
+            {
+                if(LEFT_OUTER)
+                {
+                    output.writeOuterTuple<LEFT>(*leftTuple);
+                }
+                leftReader.next();
+                continue;
+            }
+            else if(JoinHashTable::keysLess(*rightTuple, *leftTuple, comparators, numKeys))
+            {
+                if(RIGHT_OUTER)
+                {
+                    output.writeOuterTuple<RIGHT>(*rightTuple);
+                }
+                rightReader.next();
+                continue;
+            }
+            //JOIN TIME!
+            previousRightIdx = rightReader.getIdx(); //remember where the rightReader was in case we need to know later
             bool first = true;
-            while(!rightCursor.end() && rightHash == leftHash && JoinHashTable::keysEqual(*leftTuple, *rightTuple, numKeys))
+            while(!rightReader.end() && rightHash == leftHash && JoinHashTable::keysEqual(*leftTuple, *rightTuple, numKeys))
             {
                 if(first)
                 {
                     for(size_t i=0; i<numKeys; ++i)
                     {
-                        previousLeftTuple[i] = *((*leftTuple)[i]);
+                        previousLeftKeys[i] = *((*leftTuple)[i]); //remember the keys from the left tuple
                     }
                     first = false;
                 }
                 output.writeTuple(*leftTuple, *rightTuple);
-                rightCursor.next();
-                if(!rightCursor.end())
+                rightReader.next();
+                if(!rightReader.end())
                 {
-                    rightTuple = &rightCursor.getTuple();
+                    rightTuple = &(rightReader.getTuple());
                     rightHash =((*rightTuple)[rightTupleSize])->getUint32();
                 }
             }
-            leftCursor.next();
-            if(!leftCursor.end())
+            leftReader.next();
+            if(!leftReader.end())  //if the keys in the left reader are repeated, REWIND the right reader to where it was
             {
-                leftTuple = &leftCursor.getTuple();
-                if(JoinHashTable::keysEqual( &(previousLeftTuple[0]), *leftTuple, numKeys) && !first)
+                leftTuple = &(leftReader.getTuple());
+                if(JoinHashTable::keysEqual( &(previousLeftKeys[0]), *leftTuple, numKeys) && !first)
                 {
-                    rightCursor.setIdx(previousRightIdx);
-                    rightTuple = &rightCursor.getTuple();
+                    rightReader.setIdx(previousRightIdx);
+                    rightTuple = &rightReader.getTuple();
                 }
             }
+        }
+        while(LEFT_OUTER && !leftReader.end())
+        {
+            output.writeOuterTuple<LEFT> (leftReader.getTuple());
+            leftReader.next();
+        }
+        while(RIGHT_OUTER && !rightReader.end())
+        {
+            output.writeOuterTuple<RIGHT> (rightReader.getTuple());
+            rightReader.next();
         }
         return output.finalize();
     }
 
-    template <Handedness which>
+    template <Handedness WHICH_FIRST, bool LEFT_OUTER, bool RIGHT_OUTER>
     shared_ptr<Array> globalMergeJoin(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query, Settings const& settings)
     {
-        shared_ptr<Array>& first = (which == LEFT ? inputArrays[0] : inputArrays[1]);
-        ChunkFilter <which> chunkFilter(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc());
-        BloomFilter bloomFilter(settings.getBloomFilterSize());
-        first = readIntoPreSort<which>(first, query, settings, &chunkFilter, NULL, &bloomFilter, NULL);
+        shared_ptr<Array>& first = (WHICH_FIRST == LEFT ? inputArrays[0] : inputArrays[1]);
+        shared_ptr<ChunkFilter <WHICH_FIRST> > chunkFilter;
+        shared_ptr<BloomFilter> bloomFilter;
+        //if we're not doing an outer join on the second array, we can filter it using the first array:
+        if ((WHICH_FIRST == LEFT && !RIGHT_OUTER) || (WHICH_FIRST == RIGHT && !LEFT_OUTER))
+        {
+            chunkFilter.reset(new ChunkFilter<WHICH_FIRST>(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc()));
+            bloomFilter.reset(new BloomFilter(settings.getBloomFilterSize()));
+        }
+        bool const KEEP_FIRST_NULL_TUPLES = ((WHICH_FIRST == LEFT && LEFT_OUTER) || (WHICH_FIRST == RIGHT && RIGHT_OUTER));
+        first = readIntoPreSort<WHICH_FIRST, KEEP_FIRST_NULL_TUPLES>(first, query, settings, chunkFilter.get(), NULL, bloomFilter.get(), NULL);
         first = sortArray(first, query, settings);
-        first = sortedToPreSg<which>(first, query, settings);
+        first = sortedToPreSg<WHICH_FIRST>(first, query, settings);
         first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        chunkFilter.globalExchange(query);
-        bloomFilter.globalExchange(query);
-        shared_ptr<Array>& second = (which == LEFT ? inputArrays[1] : inputArrays[0]);
-        second = readIntoPreSort<(which == LEFT ? RIGHT : LEFT)>(second, query, settings, NULL, &chunkFilter, NULL, &bloomFilter);
+        if(chunkFilter.get())
+        {
+            chunkFilter->globalExchange(query);
+            bloomFilter->globalExchange(query);
+        }
+        Handedness const WHICH_SECOND = (WHICH_FIRST == LEFT ? RIGHT : LEFT);
+        bool const KEEP_SECOND_NULL_TUPLES = ((WHICH_SECOND == LEFT && LEFT_OUTER) || (WHICH_SECOND == RIGHT && RIGHT_OUTER));
+        shared_ptr<Array>& second = (WHICH_SECOND == LEFT ? inputArrays[0] : inputArrays[1]);
+        second = readIntoPreSort<WHICH_SECOND, KEEP_SECOND_NULL_TUPLES>(second, query, settings, NULL, chunkFilter.get(), NULL, bloomFilter.get());
         second = sortArray(second, query, settings);
-        second = sortedToPreSg<(which == LEFT ? RIGHT : LEFT)>(second, query, settings);
+        second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
         size_t const firstSize  = computeExactArraySize(first, query);
-        size_t const secondSize = computeExactArraySize(first, query);
+        size_t const secondSize = computeExactArraySize(second, query);
         LOG4CXX_DEBUG(logger, "EJ merge after SG first size "<<firstSize<<" second size "<<secondSize);
-        if (firstSize < settings.getHashJoinThreshold())
+        //if one of the arrays is small enough, and it's not being outer-joined, we can read it into table! Note: this is a local decision
+        if (firstSize < settings.getHashJoinThreshold() && ((WHICH_FIRST == LEFT && !LEFT_OUTER) || (WHICH_FIRST == RIGHT && !RIGHT_OUTER)))
         {
             LOG4CXX_DEBUG(logger, "EJ merge rehashing first");
             ArenaPtr operatorArena = this->getArena();
             ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
-            JoinHashTable table(settings, hashArena, which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
-            readIntoTable<which, READ_TUPLED> (first, table, settings);
-            return arrayToTableJoin<which, READ_TUPLED>( second, table, query, settings);
+            JoinHashTable table(settings, hashArena, WHICH_FIRST == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
+            readIntoHashTable<WHICH_FIRST, READ_TUPLED> (first, table, settings);
+            return arrayToTableJoin<WHICH_FIRST, READ_TUPLED, LEFT_OUTER || RIGHT_OUTER>( second, table, query, settings);
         }
-        else if(secondSize < settings.getHashJoinThreshold())
+        else if(secondSize < settings.getHashJoinThreshold() && ((WHICH_FIRST == RIGHT && !LEFT_OUTER) || (WHICH_FIRST == LEFT && !RIGHT_OUTER)))
         {
             LOG4CXX_DEBUG(logger, "EJ merge rehashing second");
             ArenaPtr operatorArena = this->getArena();
             ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
-            JoinHashTable table(settings, hashArena, which == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize());
-            readIntoTable<(which == LEFT ? RIGHT : LEFT), READ_TUPLED> (second, table, settings);
-            return arrayToTableJoin<(which == LEFT ? RIGHT : LEFT), READ_TUPLED>( first, table, query, settings);
+            JoinHashTable table(settings, hashArena, WHICH_FIRST == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize());
+            readIntoHashTable<WHICH_SECOND, READ_TUPLED> (second, table, settings);
+            return arrayToTableJoin<WHICH_SECOND, READ_TUPLED, LEFT_OUTER || RIGHT_OUTER>( first, table, query, settings);
         }
         else
         {
+            //Sort em both, sort em out
             LOG4CXX_DEBUG(logger, "EJ merge sorted");
             first = sortArray(first, query, settings);
             second= sortArray(second, query, settings);
-            return which == LEFT ? localSortedMergeJoin(first, second, query, settings) :  localSortedMergeJoin(second, first, query, settings);
+            return WHICH_FIRST == LEFT ? localSortedMergeJoin<LEFT_OUTER, RIGHT_OUTER>(first, second, query, settings) :
+                                         localSortedMergeJoin<LEFT_OUTER, RIGHT_OUTER>(second, first, query, settings);
         }
     }
 
@@ -583,12 +642,38 @@ public:
         else if (algo == Settings::MERGE_LEFT_FIRST)
         {
             LOG4CXX_DEBUG(logger, "EJ running merge_left_first");
-            return globalMergeJoin<LEFT>(inputArrays, query, settings);
+            bool const LEFT_OUTER = settings.isLeftOuter() ? true : false;
+            bool const RIGHT_OUTER = settings.isRightOuter() ? true : false;
+            if(settings.isLeftOuter() && settings.isRightOuter())
+            {
+                return globalMergeJoin<LEFT, true, true>(inputArrays, query, settings);
+            }
+            if(settings.isLeftOuter())
+            {
+                return globalMergeJoin<LEFT, true, false>(inputArrays, query, settings);
+            }
+            if(settings.isRightOuter())
+            {
+                return globalMergeJoin<LEFT, false, true>(inputArrays, query, settings);
+            }
+            return globalMergeJoin<LEFT, false, false>(inputArrays, query, settings);
         }
         else
         {
             LOG4CXX_DEBUG(logger, "EJ running merge_right_first");
-            return globalMergeJoin<RIGHT>(inputArrays, query, settings);
+            if(settings.isLeftOuter() && settings.isRightOuter())
+            {
+                return globalMergeJoin<RIGHT, true, true>(inputArrays, query, settings);
+            }
+            if(settings.isLeftOuter())
+            {
+                return globalMergeJoin<RIGHT, true, false>(inputArrays, query, settings);
+            }
+            if(settings.isRightOuter())
+            {
+                return globalMergeJoin<RIGHT, false, true>(inputArrays, query, settings);
+            }
+            return globalMergeJoin<RIGHT, false, false>(inputArrays, query, settings);
         }
     }
 };

@@ -226,9 +226,9 @@ public:
 
 /**
  * First add in tuples from one of the arrays and then filter chunk positions from the other arrays.
- * The *which* template corresponds to the generator / training array
+ * The WHICH template corresponds to the generator / training array
  */
-template <Handedness which>
+template <Handedness WHICH>
 class ChunkFilter
 {
 private:
@@ -244,17 +244,17 @@ public:
         _numJoinedDimensions(0),
         _chunkHits(0) //reallocated if actually needed below
     {
-        size_t const numFilterAtts = which == LEFT ? settings.getNumRightAttrs() : settings.getNumLeftAttrs();
-        size_t const numFilterDims = which == LEFT ? settings.getNumRightDims() : settings.getNumLeftDims();
+        size_t const numFilterAtts = WHICH == LEFT ? settings.getNumRightAttrs() : settings.getNumLeftAttrs();
+        size_t const numFilterDims = WHICH == LEFT ? settings.getNumRightDims() : settings.getNumLeftDims();
         for(size_t i=numFilterAtts; i<numFilterAtts+numFilterDims; ++i)
         {
-            if(which == LEFT ? settings.isRightKey(i) : settings.isLeftKey(i))
+            if(WHICH == LEFT ? settings.isRightKey(i) : settings.isLeftKey(i))
             {
                 _numJoinedDimensions ++;
-                _trainingArrayFields.push_back( which == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i));
+                _trainingArrayFields.push_back( WHICH == LEFT ? settings.mapRightToTuple(i) : settings.mapLeftToTuple(i));
                 size_t dimensionId = i - numFilterAtts;
                 _filterArrayDimensions.push_back(dimensionId);
-                DimensionDesc const& dimension = which == LEFT ? rightSchema.getDimensions()[dimensionId] : leftSchema.getDimensions()[dimensionId];
+                DimensionDesc const& dimension = WHICH == LEFT ? rightSchema.getDimensions()[dimensionId] : leftSchema.getDimensions()[dimensionId];
                 _filterArrayOrigins.push_back(dimension.getStartMin());
                 _filterChunkSizes.push_back(dimension.getChunkInterval());
             }
@@ -325,21 +325,21 @@ public:
     }
 };
 
-template <Handedness which>
+template <Handedness WHICH>
 ArrayDesc makePreTupledSchema(Settings const& settings, shared_ptr< Query> const& query)
 {
-    size_t const numAttrs = ( which == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize()) + 1; //plus hash
+    size_t const numAttrs = ( WHICH == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize()) + 1; //plus hash
     Attributes outputAttributes(numAttrs);
     outputAttributes[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0,0);
-    ArrayDesc const& inputSchema = ( which == LEFT ? settings.getLeftSchema() : settings.getRightSchema());
-    size_t const numInputAttrs = (which == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
-    size_t const numInputDims = (which == LEFT ? settings.getNumLeftDims() : settings.getNumRightDims());
+    ArrayDesc const& inputSchema = ( WHICH == LEFT ? settings.getLeftSchema() : settings.getRightSchema());
+    size_t const numInputAttrs = (WHICH == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
+    size_t const numInputDims = (WHICH == LEFT ? settings.getNumLeftDims() : settings.getNumRightDims());
     for(AttributeID i = 0; i < numInputAttrs; ++i)
     {
         AttributeDesc const& input = inputSchema.getAttributes(true)[i];
-        AttributeID destinationId = (which == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i));
+        AttributeID destinationId = (WHICH == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i));
         uint16_t flags = input.getFlags();
-        if( (which == LEFT ? settings.isLeftKey(i) : settings.isRightKey(i)) && settings.isKeyNullable(destinationId) )
+        if( (WHICH == LEFT ? settings.isLeftKey(i) : settings.isRightKey(i)) && settings.isKeyNullable(destinationId) )
         {
             flags |= AttributeDesc::IS_NULLABLE;
         }
@@ -347,7 +347,7 @@ ArrayDesc makePreTupledSchema(Settings const& settings, shared_ptr< Query> const
     }
     for(size_t i = 0; i< numInputDims; ++i )
     {
-        ssize_t destinationId = (which == LEFT ? settings.mapLeftToTuple(i + numInputAttrs) : settings.mapRightToTuple(i + numInputAttrs));
+        ssize_t destinationId = (WHICH == LEFT ? settings.mapLeftToTuple(i + numInputAttrs) : settings.mapRightToTuple(i + numInputAttrs));
         if(destinationId < 0)
         {
             continue;
@@ -370,7 +370,7 @@ enum WriteArrayType
     WRITE_OUTPUT            //we're writing the output array (schema as generated in Settings). Here we merge left+right tuples and use the Filter Expression if any.
 };
 
-template<WriteArrayType mode>
+template<WriteArrayType MODE>
 class ArrayWriter : public boost::noncopyable
 {
 private:
@@ -390,6 +390,7 @@ private:
     vector <uint32_t>                   _hashBreaks;
     int64_t                             _currentBreak;
     Value                               _boolTrue;
+    Value                               _nullVal;
     shared_ptr<Expression>              _filterExpression;
     vector<BindInfo>                    _filterBindings;
     size_t                              _numBindings;
@@ -407,19 +408,20 @@ public:
         _query            (query),
         _settings         (settings),
         _tuplePlaceholder (_numAttributes,  NULL),
-        _outputPosition   (mode == WRITE_OUTPUT ? 2 : 3, 0),
+        _outputPosition   (MODE == WRITE_OUTPUT ? 2 : 3, 0),
         _arrayIterators   (_numAttributes+1, NULL),
         _chunkIterators   (_numAttributes+1, NULL),
         _hashBreaks       (_numInstances-1, 0),
         _currentBreak     (0),
-        _filterExpression (mode == WRITE_OUTPUT ? settings.getFilterExpression() : NULL)
+        _filterExpression (MODE == WRITE_OUTPUT ? settings.getFilterExpression() : NULL)
     {
         _boolTrue.setBool(true);
+        _nullVal.setNull();
         for(size_t i =0; i<_numAttributes+1; ++i)
         {
             _arrayIterators[i] = _output->getIterator(i);
         }
-        if(mode == WRITE_OUTPUT)
+        if(MODE == WRITE_OUTPUT)
         {
             _outputPosition[0] = _myInstanceId;
             _outputPosition[1] = 0;
@@ -447,7 +449,7 @@ public:
             _outputPosition[0] = 0;
             _outputPosition[1] = _myInstanceId;
             _outputPosition[2] = 0;
-            if(mode == WRITE_SPLIT_ON_HASH)
+            if(MODE == WRITE_SPLIT_ON_HASH)
             {
                 uint32_t break_interval = settings.getNumHashBuckets() / _numInstances;
                 for(size_t i=0; i<_numInstances-1; ++i)
@@ -482,12 +484,12 @@ public:
 
     void writeTuple(vector<Value const*> const& tuple)
     {
-        if(mode == WRITE_OUTPUT && !tuplePassesFilter(tuple))
+        if(MODE == WRITE_OUTPUT && !tuplePassesFilter(tuple))
         {
             return;
         }
         bool newChunk = false;
-        if(mode == WRITE_SPLIT_ON_HASH)
+        if(MODE == WRITE_SPLIT_ON_HASH)
         {
             uint32_t hash = tuple[ _numAttributes-1 ]->getUint32();
             while( static_cast<size_t>(_currentBreak) < _numInstances - 1 && hash > _hashBreaks[_currentBreak] )
@@ -501,7 +503,7 @@ public:
                 newChunk =true;
             }
         }
-        if (_outputPosition[mode == WRITE_OUTPUT ? 1 : 2] % _chunkSize == 0)
+        if (_outputPosition[MODE == WRITE_OUTPUT ? 1 : 2] % _chunkSize == 0)
         {
             newChunk = true;
         }
@@ -523,12 +525,12 @@ public:
         }
         _chunkIterators[_numAttributes]->setPosition(_outputPosition);
         _chunkIterators[_numAttributes]->writeItem(_boolTrue);
-        ++_outputPosition[ mode == WRITE_OUTPUT ? 1 : 2];
+        ++_outputPosition[ MODE == WRITE_OUTPUT ? 1 : 2];
     }
 
     void writeTupleWithHash(vector<Value const*> const& tuple, Value const& hash)
     {
-        if(mode != WRITE_TUPLED)
+        if(MODE != WRITE_TUPLED)
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "internal inconsistency";
         }
@@ -544,6 +546,10 @@ public:
     template <typename TUPLE_TYPE_1, typename TUPLE_TYPE_2>
     void writeTuple(TUPLE_TYPE_1 const& left, TUPLE_TYPE_2 const& right)
     {
+        if(MODE != WRITE_OUTPUT)
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "internal inconsistency";
+        }
         for(size_t i=0; i<_numAttributes; ++i)
         {
             if(i<_leftTupleSize)
@@ -553,6 +559,45 @@ public:
             else
             {
                 _tuplePlaceholder[i] = &(getValueFromTuple(right, i - _leftTupleSize + _numKeys));
+            }
+        }
+        writeTuple(_tuplePlaceholder);
+    }
+
+    template <Handedness which, typename TUPLE_TYPE>
+    void writeOuterTuple(TUPLE_TYPE const& tuple)
+    {
+        if(MODE != WRITE_OUTPUT)
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "internal inconsistency";
+        }
+        for(size_t i=0; i<_numAttributes; ++i)
+        {
+            if(i<_numKeys)
+            {
+                _tuplePlaceholder[i] = &(getValueFromTuple(tuple, i));
+            }
+            else if(i<_leftTupleSize)
+            {
+                if(which == LEFT)
+                {
+                    _tuplePlaceholder[i] = &(getValueFromTuple(tuple, i));
+                }
+                else
+                {
+                    _tuplePlaceholder[i] = &_nullVal;
+                }
+            }
+            else
+            {
+                if(which == RIGHT)
+                {
+                    _tuplePlaceholder[i] = &(getValueFromTuple(tuple, i - _leftTupleSize + _numKeys));
+                }
+                else
+                {
+                    _tuplePlaceholder[i] = &_nullVal;
+                }
             }
         }
         writeTuple(_tuplePlaceholder);
@@ -583,7 +628,7 @@ enum ReadArrayType
     READ_SORTED          //we're reading an array that's been tupled and sorted, so it is 1D, dense and client can seek to a Coordinate of their choice
 };
 
-template<Handedness handedness, ReadArrayType arrayType>
+template<Handedness WHICH, ReadArrayType MODE, bool INCLUDE_NULL_TUPLES = false>
 class ArrayReader
 {
 private:
@@ -595,7 +640,7 @@ private:
     vector<Value>                           _dimVals;  //for reading dimensions from INPUT
     size_t const                            _numKeys;
     Coordinate const                        _chunkSize;
-    ChunkFilter<handedness == LEFT ? RIGHT : LEFT> const *const   _readChunkFilter;
+    ChunkFilter<WHICH == LEFT ? RIGHT : LEFT> const *const   _readChunkFilter;
     BloomFilter const * const               _readBloomFilter;
     Coordinate                              _currChunkIdx;
     vector<shared_ptr<ConstArrayIterator> > _aiters;
@@ -603,32 +648,32 @@ private:
 
 public:
     ArrayReader( shared_ptr<Array>& input, Settings const& settings,
-                 ChunkFilter<handedness == LEFT ? RIGHT : LEFT> const* readChunkFilter = NULL,
+                 ChunkFilter<WHICH == LEFT ? RIGHT : LEFT> const* readChunkFilter = NULL,
                  BloomFilter const* readBloomFilter = NULL):
         _input(input),
         _settings(settings),
         _nAttrs( input->getArrayDesc().getAttributes(true).size()),
         _nDims ( input->getArrayDesc().getDimensions().size()),
-        _tuple( (handedness == LEFT ? _settings.getLeftTupleSize() : _settings.getRightTupleSize()) + (arrayType == READ_INPUT ? 0 : 1)),
-        _dimVals (arrayType == READ_INPUT ? _nDims : 0),
+        _tuple( (WHICH == LEFT ? _settings.getLeftTupleSize() : _settings.getRightTupleSize()) + (MODE == READ_INPUT ? 0 : 1)),
+        _dimVals (MODE == READ_INPUT ? _nDims : 0),
         _numKeys(_settings.getNumKeys()),
-        _chunkSize( arrayType == READ_SORTED ? _input->getArrayDesc().getDimensions()[0].getChunkInterval() : -1 ),
+        _chunkSize( MODE == READ_SORTED ? _input->getArrayDesc().getDimensions()[0].getChunkInterval() : -1 ),
         _readChunkFilter(readChunkFilter),
         _readBloomFilter(readBloomFilter),
-        _currChunkIdx( arrayType == READ_SORTED ? 0 : -1),
+        _currChunkIdx( MODE == READ_SORTED ? 0 : -1),
         _aiters(_nAttrs),
         _citers(_nAttrs)
     {
         Dimensions const& dims = _input->getArrayDesc().getDimensions();
-        if(arrayType == READ_SORTED && (dims.size()!=1 || dims[0].getStartMin() != 0))
+        if(MODE == READ_SORTED && (dims.size()!=1 || dims[0].getStartMin() != 0))
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
-        if(arrayType != READ_INPUT && _nAttrs != _tuple.size())
+        if(MODE != READ_INPUT && _nAttrs != _tuple.size())
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
-        if(arrayType != READ_INPUT && _readChunkFilter)
+        if(MODE != READ_INPUT && _readChunkFilter)
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
@@ -642,13 +687,12 @@ public:
         }
     }
 
-
 private:
     bool setAndCheckTuple()
     {
-        if(arrayType == READ_TUPLED || arrayType == READ_SORTED)
+        if(MODE == READ_TUPLED || MODE == READ_SORTED)
         {
-            for(size_t i =0; i<_nAttrs; ++i)
+            for(size_t i =0; i<_nAttrs; ++i) //note: no null filtering in these modes
             {
                 _tuple[i] = &(_citers[i]->getItem());
             }
@@ -657,9 +701,9 @@ private:
         {
             for(size_t i =0; i<_nAttrs; ++i)
             {
-                size_t idx = handedness == LEFT ? _settings.mapLeftToTuple(i) : _settings.mapRightToTuple(i);
+                size_t idx = WHICH == LEFT ? _settings.mapLeftToTuple(i) : _settings.mapRightToTuple(i);
                 _tuple[idx] = &(_citers[i]->getItem());
-                if ( idx <_numKeys && _tuple[idx]->isNull())  //filter for NULLs
+                if (INCLUDE_NULL_TUPLES == false && idx <_numKeys && _tuple[idx]->isNull())  //filter for NULLs
                 {
                     return false;
                 }
@@ -669,7 +713,7 @@ private:
             {
                 for(size_t i = 0; i<_nDims; ++i)
                 {
-                    ssize_t idx = (handedness == LEFT ? _settings.mapLeftToTuple(i + _nAttrs) : _settings.mapRightToTuple(i + _nAttrs));
+                    ssize_t idx = (WHICH == LEFT ? _settings.mapLeftToTuple(i + _nAttrs) : _settings.mapRightToTuple(i + _nAttrs));
                     if(idx >= 0)
                     {
                         _dimVals[i].setInt64(pos[i]);
@@ -702,14 +746,14 @@ private:
     }
 
 public:
-    template <bool first_iteration = false>
+    template <bool FIRST_ITERATION = false>
     void next()
     {
         if(end())
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
-        if(!first_iteration)
+        if(!FIRST_ITERATION)
         {
             for(size_t i =0; i<_nAttrs; ++i)
             {
@@ -726,7 +770,7 @@ public:
         }
         while(!_aiters[0]->end())
         {
-            if(arrayType == READ_INPUT && _readChunkFilter)
+            if(MODE == READ_INPUT && _readChunkFilter)
             {
                 Coordinates const& chunkPos = _aiters[0]->getPosition();
                 if(! _readChunkFilter->containsChunk(chunkPos))
@@ -742,7 +786,7 @@ public:
             {
                 _citers[i] = _aiters[i]->getChunk().getConstIterator();
             }
-            if(arrayType == READ_SORTED)
+            if(MODE == READ_SORTED)
             {
                 _currChunkIdx = _aiters[0]->getPosition()[0];
             }
@@ -773,7 +817,7 @@ public:
 
     Coordinate getIdx()
     {
-        if(arrayType != READ_SORTED || end())
+        if(MODE != READ_SORTED || end())
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
@@ -782,7 +826,7 @@ public:
 
     void setIdx(Coordinate idx)
     {
-        if(arrayType != READ_SORTED || idx<0)
+        if(MODE != READ_SORTED || idx<0)
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }

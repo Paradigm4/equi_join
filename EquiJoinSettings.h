@@ -142,6 +142,8 @@ private:
     shared_ptr<Expression>        _filterExpression;
     vector<string>                _leftNames;
     vector<string>                _rightNames;
+    bool                          _leftOuter;
+    bool                          _rightOuter;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
@@ -274,17 +276,24 @@ private:
         }
     }
 
-    void setParamKeepDimensions(string trimmedContent)
+    bool setParamBool(string trimmedContent, bool& value)
     {
         if(trimmedContent == "1" || trimmedContent == "t" || trimmedContent == "T" || trimmedContent == "true" || trimmedContent == "TRUE")
         {
-            _keepDimensions = true;
+            value = true;
+            return true;
         }
         else if (trimmedContent == "0" || trimmedContent == "f" || trimmedContent == "F" || trimmedContent == "false" || trimmedContent == "FALSE")
         {
-            _keepDimensions = false;
+            value = false;
+            return true;
         }
-        else
+        return false;
+    }
+
+    void setParamKeepDimensions(string trimmedContent)
+    {
+        if(!setParamBool(trimmedContent, _keepDimensions))
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse keep_dimensions";
         }
@@ -310,6 +319,22 @@ private:
     void setParamFilterExpression(string trimmedContent)
     {
         _filterExpressionString = trimmedContent;
+    }
+
+    void setParamLeftOuter(string trimmedContent)
+    {
+        if(!setParamBool(trimmedContent, _leftOuter))
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse left_outer";
+        }
+    }
+
+    void setParamRightOuter(string trimmedContent)
+    {
+        if(!setParamBool(trimmedContent, _rightOuter))
+        {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse right_outer";
+        }
     }
 
     void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
@@ -349,7 +374,9 @@ public:
         _keepDimensions(false),
         _bloomFilterSize(33554467), //about 4MB, why not?
         _filterExpressionString(""),
-        _filterExpression(NULL)
+        _filterExpression(NULL),
+        _leftOuter(false),
+        _rightOuter(false)
     {
         string const leftIdsHeader                 = "left_ids=";
         string const rightIdsHeader                = "right_ids=";
@@ -361,6 +388,8 @@ public:
         string const keepDimensionsHeader          = "keep_dimensions=";
         string const bloomFilterSizeHeader         = "bloom_filter_size=";
         string const filterExpressionHeader        = "filter:";
+        string const leftOuterHeader               = "left_outer=";
+        string const rightOuterHeader              = "right_outer=";
         bool leftIdsSet            = false;
         bool rightIdsSet           = false;
         bool leftNamesSet          = false;
@@ -370,6 +399,8 @@ public:
         bool keepDimensionsSet     = false;
         bool bloomFilterSizeSet    = false;
         bool filterExpressionSet   = false;
+        bool leftOuterSet          = false;
+        bool rightOuterSet         = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -417,6 +448,14 @@ public:
             else if (starts_with(parameterString, filterExpressionHeader))
             {
                 setParam(parameterString, filterExpressionSet, filterExpressionHeader, &Settings::setParamFilterExpression);
+            }
+            else if (starts_with(parameterString, leftOuterHeader))
+            {
+                setParam(parameterString, leftOuterSet, leftOuterHeader, &Settings::setParamLeftOuter);
+            }
+            else if (starts_with(parameterString, rightOuterHeader))
+            {
+                setParam(parameterString, rightOuterSet, rightOuterHeader, &Settings::setParamRightOuter);
             }
             else
             {
@@ -560,6 +599,8 @@ private:
             TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true)[rightKey].getType() : TID_INT64;
             throwIf(leftType != rightType, "key types do not match");
         }
+        throwIf( _algorithmSet && _algorithm == HASH_REPLICATE_LEFT  && isLeftOuter(),  "left replicate algorithm cannot be used for left  outer join");
+        throwIf( _algorithmSet && _algorithm == HASH_REPLICATE_RIGHT && isRightOuter(), "right replicate algorithm cannot be used for right outer join");
     }
 
     void mapAttributes()
@@ -624,7 +665,9 @@ private:
         output<<" keep_dimensions "<<_keepDimensions;
         output<<" bloom filter size "<<_bloomFilterSize;
         output<<" expression "<<_filterExpressionString;
-        LOG4CXX_DEBUG(logger, "RJN keys "<<output.str().c_str());
+        output<<" left outer "<<_leftOuter;
+        output<<" right outer "<<_rightOuter;
+        LOG4CXX_DEBUG(logger, "EJ keys "<<output.str().c_str());
     }
 
 public:
@@ -760,6 +803,16 @@ public:
         return _filterExpression;
     }
 
+    bool isLeftOuter() const
+    {
+        return _leftOuter;
+    }
+
+    bool isRightOuter() const
+    {
+        return _rightOuter;
+    }
+
     ArrayDesc const& getLeftSchema() const
     {
         return _leftSchema;
@@ -770,7 +823,7 @@ public:
         return _rightSchema;
     }
 
-    ArrayDesc getOutputSchema(shared_ptr< Query> query)
+    ArrayDesc getOutputSchema(shared_ptr< Query> const& query) const
     {
         Attributes outputAttributes(getNumOutputAttrs());
         ArrayDesc const& leftSchema = getLeftSchema();
@@ -784,7 +837,7 @@ public:
             AttributeDesc const& input = leftSchema.getAttributes(true)[i];
             AttributeID destinationId = mapLeftToOutput(i);
             uint16_t flags = input.getFlags();
-            if(isLeftKey(i) && isKeyNullable(destinationId) )
+            if( isRightOuter() || (isLeftKey(i) && isKeyNullable(destinationId)))
             {
                 flags |= AttributeDesc::IS_NULLABLE;
             }
@@ -799,7 +852,7 @@ public:
             }
             DimensionDesc const& inputDim = leftSchema.getDimensions()[i];
             uint16_t flags = 0;
-            if(isLeftKey(i + _numLeftAttrs) && isKeyNullable(destinationId)) //is it joined with a nullable attribute?
+            if( isRightOuter() || (isLeftKey(i + _numLeftAttrs) && isKeyNullable(destinationId))) //is it joined with a nullable attribute?
             {
                 flags = AttributeDesc::IS_NULLABLE;
             }
@@ -813,7 +866,12 @@ public:
             }
             AttributeDesc const& input = rightSchema.getAttributes(true)[i];
             AttributeID destinationId = mapRightToOutput(i);
-            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), input.getFlags(), 0);
+            uint16_t flags = input.getFlags();
+            if(isLeftOuter())
+            {
+                flags |= AttributeDesc::IS_NULLABLE;
+            }
+            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
         }
         for(size_t i =0; i<numRightDims; ++i)
         {
@@ -823,7 +881,7 @@ public:
                 continue;
             }
             DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
-            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
+            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, 0);
         }
         outputAttributes = addEmptyTagAttribute(outputAttributes);
         Dimensions outputDimensions;
