@@ -1,32 +1,66 @@
 # equi_join
 Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. The objective of the operator is to make joining of various diverse datasets easier and more performant. Traditionally, DBMS engines use the optimizer to estimate the sizes of joined structures and choose an algorithm; SciDB aims to get there in the future. For now, this operator uses adaptive heurisitics instead. It examines the inputs, using some pre-scanning if needed, and picks a reasonably good code path.
 
-## Examples
+## Basic exmaples
+
+We'll start with a couple made-up arrays:
 ```
-#Make up some arrays:
-$ iquery -aq "store(apply(build(<a:string>[i=0:5,2,0], '[(abc),(def),(ghi),(jkl),(mno)]', true), b, double(i)*1.1), left)"
+$ iquery -aq "store(apply(build(<a:string>[i=0:5,2,0], '[(null),(def),(ghi),(jkl),(mno)]', true), b, double(i)*1.1), left)"
 {i} a,b
-{0} 'abc',0
+{0} null,0
 {1} 'def',1.1
 {2} 'ghi',2.2
 {3} 'jkl',3.3
 {4} 'mno',4.4
 
-$ iquery -aq "store(apply(build(<c:string>[j=1:5,3,0], '[(def),(mno),(pqr),(def)]', true), d, j), right)"
+$ iquery -aq "store(apply(build(<c:string>[j=1:5,3,0], '[(def),(mno),(null),(def)]', true), d, j), right)"
 {j} c,d
 {1} 'def',1
 {2} 'mno',2
-{3} 'pqr',3
+{3} null,3
 {4} 'def',4
+```
 
-#Join the arrays on the string attribute, i.e. left.a=right.c:
+Join the arrays on the string attribute, i.e. left.a=right.c:
+```
 $ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c')"
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,1
-{0,1} 'def',1.1,4
+{0,1} 'mno',4.4,2
+{1,0} 'def',1.1,4
+```
+
+Perform left, right or full outer joins. Note the order of returned results may vary:
+```
+$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'left_outer=true')"
+{instance_id,value_no} a,b,d
+{0,0} null,0,null        
+{0,1} 'def',1.1,1
+{0,2} 'def',1.1,4
+{1,0} 'ghi',2.2,null     
+{1,1} 'jkl',3.3,null     
 {2,0} 'mno',4.4,2
 
-#Join on two keys: left.i = right.d (note: dimension to attribute) and left.a=right.c
+$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'right_outer=true')"
+{instance_id,value_no} a,b,d
+{0,0} 'def',1.1,1
+{0,1} 'mno',4.4,2
+{0,2} null,null,3
+{1,0} 'def',1.1,4
+
+$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'left_outer=true', 'right_outer=true')"
+{instance_id,value_no} a,b,d
+{1,0} 'mno',4.4,2
+{2,0} null,0,null
+{2,1} null,null,3
+{2,2} 'def',1.1,1
+{2,3} 'def',1.1,4
+{3,0} 'ghi',2.2,null
+{3,1} 'jkl',3.3,null
+```
+
+Join on two keys: left.i = right.d (note: dimension to attribute) and left.a=right.c. Not we are using dimension and attribute indeces instead of names:
+```
 $ iquery -aq "equi_join(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
 {instance_id,value_no} i,a,b
 {0,0} 1,'def',1.1
