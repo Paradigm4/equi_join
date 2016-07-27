@@ -1130,3 +1130,23 @@ Chapter 29
 {5} 'jkl',3,3.3,null
 {6} 'mno',2,null,2
 {7} 'mno',4,4.4,null
+ 
+Chapter 30
+{n} i,a,b,c,d
+{0} 0,null,0,null,null
+{1} 1,'def',1.1,'def',1
+{2} 2,'ghi',2.2,'mno',2
+{3} 3,'jkl',3.3,null,3
+{4} 4,'mno',4.4,'def',4
+{n} i,a,b,c,d
+{0} 0,null,0,null,null
+{1} 1,'def',1.1,'def',1
+{2} 2,'ghi',2.2,'mno',2
+{3} 3,'jkl',3.3,null,3
+{4} 4,'mno',4.4,'def',4
+{n} i,a,b,c,d
+{0} 0,null,0,null,null
+{1} 1,'def',1.1,'def',1
+{2} 2,'ghi',2.2,'mno',2
+{3} 3,'jkl',3.3,null,3
+{4} 4,'mno',4.4,'def',4

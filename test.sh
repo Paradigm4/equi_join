@@ -402,5 +402,11 @@ echo "Chapter 29" >> $OUTFILE 2>&1
 iquery -aq "sort(equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,1', 'left_outer=1', 'right_outer=1', 'keep_dimensions=1', 'algorithm=merge_right_first'), a, i,b)" >> $OUTFILE 2>&1
 iquery -aq "sort(equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,1', 'left_outer=1', 'right_outer=1', 'keep_dimensions=1', 'algorithm=merge_left_first'), a, i,b)" >> $OUTFILE 2>&1
 
+echo " " >> $OUTFILE 2>&1
+echo "Chapter 30" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1'), i)"  >> $OUTFILE 2>&1 
+iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1', 'algorithm=merge_left_first'),  i)"  >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1', 'algorithm=merge_right_first'), i)"  >> $OUTFILE 2>&1
+
 diff test.out test.expected
 
