@@ -1,7 +1,7 @@
 # equi_join
 Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. The objective of the operator is to make joining of various diverse datasets easier and more performant. Traditionally, DBMS engines use the optimizer to estimate the sizes of joined structures and choose an algorithm; SciDB aims to get there in the future. For now, this operator uses adaptive heurisitics instead. It examines the inputs, using some pre-scanning if needed, and picks a reasonably good code path.
 
-## Basic exmaples
+## Examples
 
 We'll start with a couple made-up arrays:
 ```
@@ -29,7 +29,7 @@ $ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c')"
 {0,1} 'mno',4.4,2
 {1,0} 'def',1.1,4
 ```
-Note "left.a" and "right.c" are combined into a single attribute "a". This is followed by the input attributes "left.b" and "right.c".
+Note "left.a" and "right.c" are combined into a single attribute "a" (name inherited from left). The other two attributes are "left.b" and "right.d".
 
 Perform left, right or full outer joins. Note the order of returned results may vary:
 ```
@@ -60,14 +60,14 @@ $ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'left_oute
 {3,1} 'jkl',3.3,null
 ```
 
-Join on two keys: left.i = right.d (note: dimension to attribute) and left.a=right.c. Not we are using dimension and attribute indeces instead of names:
+Join on two keys: left.i = right.d (dimension to attribute) and left.a=right.c. Note we can use zero-based dimension and attribute identifiers instead of names:
 ```
 $ iquery -aq "equi_join(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
 {instance_id,value_no} i,a,b
 {0,0} 1,'def',1.1
 ```
 
-## Compared to the Existing cross_join
+### Compared to the Existing cross_join
 ```
 #Make a large 2D dense arrary:
 $ iquery -anq "store(build(<a:double> [x=1:10000,1000,0, y=1:10000,1000,0], random()), twod)"
