@@ -159,6 +159,14 @@ Note the join keys are placed first, their names are assigned from the left arra
 
 Note that the result is "flattened" along `[instance_id, value_no]` in a matter similar to operators like `grouped_aggregate`, `sort`, `stream` and so on. Depending on the join keys, input chunking may or may not be easy to preserve and it may take extra work to preserve it. The needs to perform any redimensioning manually, post join.
 
+## Installation
+
+The easiest route is to use https://github.com/paradigm4/dev_tools Follow the instructions there to set up dev_tools first. Then do:
+```
+iquery -aq "install_github('paradigm4/equi_join')"
+iquery -aq "load_library('equi_join')"
+```
+
 ## Algorithms
 The operator first estimates the lower bound sizes of the two input arrays and then, absent a user override, picks an algorithm based on those sizes.
 
