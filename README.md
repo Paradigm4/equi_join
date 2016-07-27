@@ -29,6 +29,7 @@ $ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c')"
 {0,1} 'mno',4.4,2
 {1,0} 'def',1.1,4
 ```
+Note "left.a" and "right.c" are combined into a single attribute "a". This is followed by the input attributes "left.b" and "right.c".
 
 Perform left, right or full outer joins. Note the order of returned results may vary:
 ```
