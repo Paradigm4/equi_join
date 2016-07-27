@@ -144,6 +144,7 @@ private:
     vector<string>                _rightNames;
     bool                          _leftOuter;
     bool                          _rightOuter;
+    vector<string>                _outNames;
 
     static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
     {
@@ -215,6 +216,11 @@ private:
     void setParamRightNames(string trimmedContent)
     {
         setParamNames(trimmedContent, _rightNames);
+    }
+
+    void setParamOutNames(string trimmedContent)
+    {
+        setParamNames(trimmedContent, _outNames);
     }
 
     void setParamHashJoinThreshold(string trimmedContent)
@@ -353,7 +359,7 @@ private:
     }
 
 public:
-    static size_t const MAX_PARAMETERS = 8;
+    static size_t const MAX_PARAMETERS = 11;
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
@@ -376,7 +382,8 @@ public:
         _filterExpressionString(""),
         _filterExpression(NULL),
         _leftOuter(false),
-        _rightOuter(false)
+        _rightOuter(false),
+        _outNames(0)
     {
         string const leftIdsHeader                 = "left_ids=";
         string const rightIdsHeader                = "right_ids=";
@@ -390,6 +397,7 @@ public:
         string const filterExpressionHeader        = "filter:";
         string const leftOuterHeader               = "left_outer=";
         string const rightOuterHeader              = "right_outer=";
+        string const outNamesHeader                = "out_names=";
         bool leftIdsSet            = false;
         bool rightIdsSet           = false;
         bool leftNamesSet          = false;
@@ -401,6 +409,7 @@ public:
         bool filterExpressionSet   = false;
         bool leftOuterSet          = false;
         bool rightOuterSet         = false;
+        bool outNamesSet           = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
@@ -457,6 +466,10 @@ public:
             {
                 setParam(parameterString, rightOuterSet, rightOuterHeader, &Settings::setParamRightOuter);
             }
+            else if (starts_with(parameterString, outNamesHeader))
+            {
+                setParam(parameterString, outNamesSet, outNamesHeader, &Settings::setParamOutNames);
+            }
             else
             {
                 ostringstream error;
@@ -466,6 +479,7 @@ public:
         }
         verifyInputs();
         mapAttributes();
+        checkOutputNames();
         if(filterExpressionSet)
         {
             compileExpression(query);
@@ -642,13 +656,43 @@ private:
         _rightTupleSize = j;
     }
 
+    void checkOutputNames()
+    {
+        if(_outNames.size())
+        {
+            if(_outNames.size() != getNumOutputAttrs())
+            {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Incorrect number of output names provided";
+            }
+            for(size_t i =0; i<_outNames.size(); ++i)
+            {
+                string const& t = _outNames[i];
+                if(t.size()==0)
+                {
+                    throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Improper output names provided";
+                }
+                for(size_t j=0; j<t.size(); ++j)
+                {
+                    char ch = t[j];
+                    if( !( (j == 0 && ((ch>='a' && ch<='z') || (ch>='A' && ch<='Z') || ch == '_')) ||
+                           (j > 0  && ((ch>='a' && ch<='z') || (ch>='A' && ch<='Z') || (ch>='0' && ch <= '9') || ch == '_' ))))
+                    {
+                        ostringstream error;
+                        error<<"invalid name '"<<t<<"'";
+                        throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str();;
+                    }
+                }
+            }
+        }
+    }
+
     void compileExpression(shared_ptr<Query>& query)
     {
         shared_ptr<LogicalExpression> logicalExpr = parseExpression(_filterExpressionString);
         ArrayDesc inputDesc = getOutputSchema(query);
         vector<ArrayDesc> inputDescs;
         inputDescs.push_back(inputDesc);
-        ArrayDesc outputDesc = getOutputSchema(query);
+        ArrayDesc outputDesc =inputDesc;
         _filterExpression.reset(new Expression());
         _filterExpression->compile(logicalExpr, query, false, TID_BOOL, inputDescs, outputDesc);
     }
@@ -841,7 +885,8 @@ public:
             {
                 flags |= AttributeDesc::IS_NULLABLE;
             }
-            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
+            string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, 0, input.getAliases());
         }
         for(size_t i =0; i<numLeftDims; ++i)
         {
@@ -856,7 +901,8 @@ public:
             {
                 flags = AttributeDesc::IS_NULLABLE;
             }
-            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, flags, 0);
+            string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, 0);
         }
         for(AttributeID i =0; i<numRightAttrs; ++i)
         {
@@ -871,7 +917,8 @@ public:
             {
                 flags |= AttributeDesc::IS_NULLABLE;
             }
-            outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
+            string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, 0, input.getAliases());
         }
         for(size_t i =0; i<numRightDims; ++i)
         {
@@ -881,7 +928,8 @@ public:
                 continue;
             }
             DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
-            outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, 0);
+            string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, 0);
         }
         outputAttributes = addEmptyTagAttribute(outputAttributes);
         Dimensions outputDimensions;

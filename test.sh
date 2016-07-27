@@ -404,7 +404,7 @@ iquery -aq "sort(equi_join(left, right, 'left_ids=0,~0', 'right_ids=0,1', 'left_
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 30" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1'), i)"  >> $OUTFILE 2>&1 
+iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1', 'out_names=uv,w,x,y_,z'), uv)" >> $OUTFILE 2>&1 
 iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1', 'algorithm=merge_left_first'),  i)"  >> $OUTFILE 2>&1
 iquery -aq "sort(equi_join(left, right, 'left_names=i', 'right_names=j', 'left_outer=1', 'right_outer=1', 'algorithm=merge_right_first'), i)"  >> $OUTFILE 2>&1
 
