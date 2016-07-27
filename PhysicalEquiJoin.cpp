@@ -163,8 +163,8 @@ public:
         }
         ArrayDesc const& leftDesc  = inputArrays[0]->getArrayDesc();
         ArrayDesc const& rightDesc = inputArrays[1]->getArrayDesc();
-        size_t leftCellSize  = PhysicalBoundaries::getCellSizeBytes(makePreTupledSchema<LEFT> (settings, query).getAttributes());
-        size_t rightCellSize = PhysicalBoundaries::getCellSizeBytes(makePreTupledSchema<RIGHT>(settings, query).getAttributes());
+        size_t leftCellSize  = PhysicalBoundaries::getCellSizeBytes(makeTupledSchema<LEFT> (settings, query).getAttributes());
+        size_t rightCellSize = PhysicalBoundaries::getCellSizeBytes(makeTupledSchema<RIGHT>(settings, query).getAttributes());
         shared_ptr<ConstArrayIterator> laiter = inputArrays[0]->getConstIterator(leftDesc.getAttributes().size()-1);
         shared_ptr<ConstArrayIterator> raiter = inputArrays[1]->getConstIterator(rightDesc.getAttributes().size()-1);
         size_t leftSize =0, rightSize =0;
@@ -319,6 +319,7 @@ public:
             table.insert(tuple);
             reader.next();
         }
+        reader.logStats();
     }
 
     template <Handedness WHICH_IS_IN_TABLE, ReadArrayType ARRAY_TYPE, bool ARRAY_OUTER_JOIN>
@@ -364,6 +365,7 @@ public:
             }
             reader.next();
         }
+        reader.logStats();
         return result.finalize();
     }
 
@@ -392,13 +394,13 @@ public:
         return arrayToTableJoin<WHICH_REPLICATED, READ_INPUT, false>( WHICH_REPLICATED == LEFT ? inputArrays[1]: inputArrays[0], table, query, settings, filter.get());
     }
 
-    template <Handedness WHICH, bool INCLUDE_NULL_TUPLES = false>
+    template <Handedness WHICH, bool INCLUDE_NULL_TUPLES = false, bool HASH_NULLS = false>
     shared_ptr<Array> readIntoPreSort(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings,
                                       ChunkFilter<WHICH>* chunkFilterToGenerate, ChunkFilter<WHICH == LEFT ? RIGHT : LEFT> const* chunkFilterToApply,
                                       BloomFilter* bloomFilterToGenerate,        BloomFilter const* bloomFilterToApply)
     {
         ArrayReader<WHICH, READ_INPUT, INCLUDE_NULL_TUPLES> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
-        ArrayWriter<WRITE_TUPLED> writer(settings, query, makePreTupledSchema<WHICH>(settings, query));
+        ArrayWriter<WRITE_TUPLED> writer(settings, query, makeTupledSchema<WHICH>(settings, query));
         size_t const hashMod = settings.getNumHashBuckets();
         vector<char> hashBuf(64);
         size_t const numKeys = settings.getNumKeys();
@@ -414,10 +416,11 @@ public:
             {
                 bloomFilterToGenerate->addTuple(tuple, numKeys);
             }
-            hashVal.setUint32( JoinHashTable::hashKeys<INCLUDE_NULL_TUPLES>(tuple, numKeys, hashBuf) % hashMod);
+            hashVal.setUint32( JoinHashTable::hashKeys<HASH_NULLS>(tuple, numKeys, hashBuf) % hashMod);
             writer.writeTupleWithHash(tuple, hashVal);
             reader.next();
         }
+        reader.logStats();
         return writer.finalize();
     }
 
@@ -439,7 +442,7 @@ public:
     template <Handedness WHICH>
     shared_ptr<Array> sortedToPreSg(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
     {
-        ArrayWriter<WRITE_SPLIT_ON_HASH> writer(settings, query, makePreTupledSchema<WHICH>(settings, query));
+        ArrayWriter<WRITE_SPLIT_ON_HASH> writer(settings, query, makeTupledSchema<WHICH>(settings, query));
         ArrayReader<WHICH, READ_TUPLED> reader(inputArray, settings);
         while(!reader.end())
         {
@@ -459,6 +462,7 @@ public:
         ArrayReader<RIGHT, READ_SORTED> rightReader(rightSorted, settings);
         vector<Value> previousLeftKeys(numKeys);
         Coordinate previousRightIdx = -1;
+        uint32_t previousLeftHash;
         size_t const leftTupleSize = settings.getLeftTupleSize();
         size_t const rightTupleSize = settings.getRightTupleSize();
         while(!leftReader.end() && !rightReader.end())
@@ -516,7 +520,6 @@ public:
                 continue;
             }
             //JOIN TIME!
-            previousRightIdx = rightReader.getIdx(); //remember where the rightReader was in case we need to know later
             bool first = true;
             while(!rightReader.end() && rightHash == leftHash && JoinHashTable::keysEqual(*leftTuple, *rightTuple, numKeys))
             {
@@ -526,6 +529,7 @@ public:
                     {
                         previousLeftKeys[i] = *((*leftTuple)[i]); //remember the keys from the left tuple
                     }
+                    previousRightIdx = rightReader.getIdx(); //remember where the rightReader was in case we need to rewind later
                     first = false;
                 }
                 output.writeTuple(*leftTuple, *rightTuple);
@@ -534,13 +538,18 @@ public:
                 {
                     rightTuple = &(rightReader.getTuple());
                     rightHash =((*rightTuple)[rightTupleSize])->getUint32();
+                    if(RIGHT_OUTER && isNullTuple(*rightTuple, numKeys))
+                    {
+                        break; //will be caught up top
+                    }
                 }
             }
             leftReader.next();
-            if(!leftReader.end())  //if the keys in the left reader are repeated, REWIND the right reader to where it was
+            if(!leftReader.end())  //if the keys in the left reader are repeated, rewind the right reader to where it was
             {
                 leftTuple = &(leftReader.getTuple());
-                if(JoinHashTable::keysEqual( &(previousLeftKeys[0]), *leftTuple, numKeys) && !first)
+                uint32_t nextLeftHash = ((*leftTuple)[leftTupleSize])->getUint32();
+                if(leftHash == nextLeftHash && (!LEFT_OUTER || !isNullTuple(*leftTuple, numKeys)) && JoinHashTable::keysEqual( &(previousLeftKeys[0]), *leftTuple, numKeys) && !first)
                 {
                     rightReader.setIdx(previousRightIdx);
                     rightTuple = &rightReader.getTuple();
@@ -566,14 +575,14 @@ public:
         shared_ptr<Array>& first = (WHICH_FIRST == LEFT ? inputArrays[0] : inputArrays[1]);
         shared_ptr<ChunkFilter <WHICH_FIRST> > chunkFilter;
         shared_ptr<BloomFilter> bloomFilter;
-        //if we're not doing an outer join on the second array, we can filter it using the first array:
-        if ((WHICH_FIRST == LEFT && !RIGHT_OUTER) || (WHICH_FIRST == RIGHT && !LEFT_OUTER))
+        if ((WHICH_FIRST == LEFT && !RIGHT_OUTER) || (WHICH_FIRST == RIGHT && !LEFT_OUTER)) //if second array is not outer, then use first array to filter it!
         {
             chunkFilter.reset(new ChunkFilter<WHICH_FIRST>(settings, inputArrays[0]->getArrayDesc(), inputArrays[1]->getArrayDesc()));
             bloomFilter.reset(new BloomFilter(settings.getBloomFilterSize()));
         }
         bool const KEEP_FIRST_NULL_TUPLES = ((WHICH_FIRST == LEFT && LEFT_OUTER) || (WHICH_FIRST == RIGHT && RIGHT_OUTER));
-        first = readIntoPreSort<WHICH_FIRST, KEEP_FIRST_NULL_TUPLES>(first, query, settings, chunkFilter.get(), NULL, bloomFilter.get(), NULL);
+        bool const HASH_NULLS = (LEFT_OUTER || RIGHT_OUTER); //hashes gotta match
+        first = readIntoPreSort<WHICH_FIRST, KEEP_FIRST_NULL_TUPLES, HASH_NULLS>(first, query, settings, chunkFilter.get(), NULL, bloomFilter.get(), NULL);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<WHICH_FIRST>(first, query, settings);
         first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
@@ -585,7 +594,7 @@ public:
         Handedness const WHICH_SECOND = (WHICH_FIRST == LEFT ? RIGHT : LEFT);
         bool const KEEP_SECOND_NULL_TUPLES = ((WHICH_SECOND == LEFT && LEFT_OUTER) || (WHICH_SECOND == RIGHT && RIGHT_OUTER));
         shared_ptr<Array>& second = (WHICH_SECOND == LEFT ? inputArrays[0] : inputArrays[1]);
-        second = readIntoPreSort<WHICH_SECOND, KEEP_SECOND_NULL_TUPLES>(second, query, settings, NULL, chunkFilter.get(), NULL, bloomFilter.get());
+        second = readIntoPreSort<WHICH_SECOND, KEEP_SECOND_NULL_TUPLES, HASH_NULLS>(second, query, settings, NULL, chunkFilter.get(), NULL, bloomFilter.get());
         second = sortArray(second, query, settings);
         second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
@@ -642,8 +651,6 @@ public:
         else if (algo == Settings::MERGE_LEFT_FIRST)
         {
             LOG4CXX_DEBUG(logger, "EJ running merge_left_first");
-            bool const LEFT_OUTER = settings.isLeftOuter() ? true : false;
-            bool const RIGHT_OUTER = settings.isRightOuter() ? true : false;
             if(settings.isLeftOuter() && settings.isRightOuter())
             {
                 return globalMergeJoin<LEFT, true, true>(inputArrays, query, settings);

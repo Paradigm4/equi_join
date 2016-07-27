@@ -326,7 +326,7 @@ public:
 };
 
 template <Handedness WHICH>
-ArrayDesc makePreTupledSchema(Settings const& settings, shared_ptr< Query> const& query)
+ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& query)
 {
     size_t const numAttrs = ( WHICH == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize()) + 1; //plus hash
     Attributes outputAttributes(numAttrs);
@@ -645,6 +645,11 @@ private:
     Coordinate                              _currChunkIdx;
     vector<shared_ptr<ConstArrayIterator> > _aiters;
     vector<shared_ptr<ConstChunkIterator> > _citers;
+    size_t                                  _chunksAvailable;
+    size_t                                  _chunksExcluded;
+    size_t                                  _tuplesAvailable;
+    size_t                                  _tuplesExcludedNull;
+    size_t                                  _tuplesExcludedBloom;
 
 public:
     ArrayReader( shared_ptr<Array>& input, Settings const& settings,
@@ -662,7 +667,12 @@ public:
         _readBloomFilter(readBloomFilter),
         _currChunkIdx( MODE == READ_SORTED ? 0 : -1),
         _aiters(_nAttrs),
-        _citers(_nAttrs)
+        _citers(_nAttrs),
+        _chunksAvailable(0),
+        _chunksExcluded(0),
+        _tuplesAvailable(0),
+        _tuplesExcludedNull(0),
+        _tuplesExcludedBloom(0)
     {
         Dimensions const& dims = _input->getArrayDesc().getDimensions();
         if(MODE == READ_SORTED && (dims.size()!=1 || dims[0].getStartMin() != 0))
@@ -690,6 +700,7 @@ public:
 private:
     bool setAndCheckTuple()
     {
+        ++_tuplesAvailable;
         if(MODE == READ_TUPLED || MODE == READ_SORTED)
         {
             for(size_t i =0; i<_nAttrs; ++i) //note: no null filtering in these modes
@@ -705,6 +716,7 @@ private:
                 _tuple[idx] = &(_citers[i]->getItem());
                 if (INCLUDE_NULL_TUPLES == false && idx <_numKeys && _tuple[idx]->isNull())  //filter for NULLs
                 {
+                    ++_tuplesExcludedNull;
                     return false;
                 }
             }
@@ -724,6 +736,7 @@ private:
         }
         if(_readBloomFilter && _readBloomFilter->hasTuple(_tuple, _numKeys) == false) //now run through the bloom filter, if any
         {
+            ++_tuplesExcludedBloom;
             return false;
         }
         return true; //we got a valid tuple!
@@ -770,6 +783,7 @@ public:
         }
         while(!_aiters[0]->end())
         {
+            ++_chunksAvailable;
             if(MODE == READ_INPUT && _readChunkFilter)
             {
                 Coordinates const& chunkPos = _aiters[0]->getPosition();
@@ -779,6 +793,7 @@ public:
                     {
                         ++(*_aiters[i]);
                     }
+                    ++_chunksExcluded;
                     continue;
                 }
             }
@@ -804,6 +819,14 @@ public:
     bool end()
     {
         return _aiters[0]->end();
+    }
+
+    void logStats()
+    {
+        string const which = WHICH == LEFT ? "left" : "right";
+        string const mode  = MODE == READ_INPUT ? "input" : MODE ==READ_TUPLED ? "tupled" : "sorted";
+        LOG4CXX_DEBUG(logger, "EJ Array Read "<<which<<" "<< mode<< " total chunks "<<_chunksAvailable<<" chunks excluded "<<_chunksExcluded<<" tuples in included chunks "<<_tuplesAvailable<<
+                " NULL tuples excluded "<<_tuplesExcludedNull<<" Bloom filter tuples excluded "<<_tuplesExcludedBloom);
     }
 
     vector<Value const*> const& getTuple()
