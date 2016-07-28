@@ -127,6 +127,11 @@ You can use either `names` or `ids` for either array. There must be an equal num
 
 By default, both of these are set to false. Setting both `left_outer=true` and `right_outer=true` will result in a full outer join.
 
+### Output names
+If desired, user can set a list of output names to disambiguate:
+* `out_names=a,b,c,...`
+The number of provided tokens must match the number of attributes in the output (num left attrs + num right attrs - num join keys). By default, the names are copied from the input arrays, left array taking precedence for join keys.
+
 ### Additional filter on the output:
 * `filter:expression` can be used to apply an additional filter to the result. 
 
@@ -136,7 +141,7 @@ $ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'filter:b<
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,4
 ```
-Note, `equi_join(..., 'filter:expression')` is equivalent to `filter(equi_join(...), expression)` except the operator is materializing and the former will apply filtering prior to materialization. This is an efficiency improvement in cases where the join on keys increases the size of the data before filtering.
+Note, `equi_join(..., 'filter:expression')` is equivalent to `filter(equi_join(...), expression)` except the operator is materializing and the former will apply filtering prior to materialization. This is an efficiency improvement in cases where the join on keys increases the size of the data before filtering. If `out_names=` is set, then the expression will refer to the names provided in `out_names`. 
 
 ### Other settings:
 * `chunk_size=S`: for the output
