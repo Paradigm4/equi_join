@@ -172,6 +172,21 @@ public:
     {}
 
 public:
+    /**
+     * Compute how much memory a set of attributes would occupy in the table.
+     */
+    static size_t computeTupleOverhead(Attributes const& tupleAttributes)
+    {
+        size_t overhead = sizeof(HashTableEntry);  //one per tuple
+        for(size_t i =0; i<tupleAttributes.size(); ++i)
+        {
+            AttributeDesc const& att = tupleAttributes[i];
+            size_t const size = att.getSize() == 0 ? Config::getInstance()->getOption<int>(CONFIG_STRING_SIZE_ESTIMATION) : att.getSize();
+            overhead += (sizeof(Value) + (size <= sizeof(void*) ? 0 : size));
+        }
+        return overhead;
+    }
+
     template<bool INCLUDE_NULLS = false> //note: the table does not allow null entries but we can hash null values
     static uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys, vector<char>& buf)
     {

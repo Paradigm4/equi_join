@@ -57,36 +57,28 @@ public:
         return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
     }
 
-    size_t computeExactArraySize(shared_ptr<Array> &input, shared_ptr<Query>& query)
+    template<Handedness WHICH>
+    size_t computeArrayOverhead(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings)
     {
-        size_t result = 0;
-        size_t const nAttrs = input->getArrayDesc().getAttributes().size();
-        vector<shared_ptr<ConstArrayIterator> >aiters(nAttrs);
-        for(size_t i =0; i<nAttrs; ++i)
+        size_t tupleOverhead = JoinHashTable::computeTupleOverhead(makeTupledSchema<WHICH> (settings, query).getAttributes(true));
+        size_t totalCount = 0;
+        shared_ptr<ConstArrayIterator> aiter(input->getConstIterator(input->getArrayDesc().getAttributes().size()-1));
+        while(!aiter->end())
         {
-            aiters[i] = input->getConstIterator(i);
+            totalCount += aiter->getChunk().count();
+            ++(*aiter);
         }
-        while(!aiters[0]->end())
-        {
-            for(size_t i =0; i<nAttrs; ++i)
-            {
-                result += aiters[i]->getChunk().getSize();
-            }
-            for(size_t i =0; i<nAttrs; ++i)
-            {
-                ++(*aiters[i]);
-            }
-        }
-        return result;
+        return totalCount * tupleOverhead;
     }
 
-    size_t globalComputeExactArraySize(shared_ptr<Array> &input, shared_ptr<Query>& query)
+    template<Handedness WHICH>
+    size_t globalComputeArrayOverhead(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings)
     {
-        size_t size =  computeExactArraySize(input, query);
+        size_t overhead =  computeArrayOverhead<WHICH>(input, query, settings);
         size_t const nInstances = query->getInstancesCount();
         InstanceID myId = query->getInstanceID();
         std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
-        *((size_t*) buf->getData()) = size;
+        *((size_t*) buf->getData()) = overhead;
         for(InstanceID i=0; i<nInstances; i++)
         {
            if(i != myId)
@@ -100,10 +92,10 @@ public:
            {
                buf = BufReceive(i,query);
                size_t otherInstanceSize = *((size_t*) buf->getData());
-               size += otherInstanceSize;
+               overhead += otherInstanceSize;
            }
         }
-        return size;
+        return overhead;
     }
 
     /**
@@ -163,8 +155,8 @@ public:
         }
         ArrayDesc const& leftDesc  = inputArrays[0]->getArrayDesc();
         ArrayDesc const& rightDesc = inputArrays[1]->getArrayDesc();
-        size_t leftCellSize  = PhysicalBoundaries::getCellSizeBytes(makeTupledSchema<LEFT> (settings, query).getAttributes());
-        size_t rightCellSize = PhysicalBoundaries::getCellSizeBytes(makeTupledSchema<RIGHT>(settings, query).getAttributes());
+        size_t leftCellSize  = JoinHashTable::computeTupleOverhead(makeTupledSchema<LEFT> (settings, query).getAttributes(true));
+        size_t rightCellSize = JoinHashTable::computeTupleOverhead(makeTupledSchema<LEFT> (settings, query).getAttributes(true));
         shared_ptr<ConstArrayIterator> laiter = inputArrays[0]->getConstIterator(leftDesc.getAttributes().size()-1);
         shared_ptr<ConstArrayIterator> raiter = inputArrays[1]->getConstIterator(rightDesc.getAttributes().size()-1);
         size_t leftSize =0, rightSize =0;
@@ -203,8 +195,9 @@ public:
         }
         result.leftSizeEstimate =leftSize;
         result.rightSizeEstimate=rightSize;
-        LOG4CXX_DEBUG(logger, "EJ prescan complete leftFinished "<<result.finishedLeft<<" rightFinished "<< result.finishedRight<<" leftSize "<<result.leftSizeEstimate
-                              <<" rightSize "<<result.rightSizeEstimate);
+        LOG4CXX_DEBUG(logger, "EJ prescan complete left cell overhead "<<leftCellSize<<" right cell overhead "<<rightCellSize
+                              <<" leftFinished "<<result.finishedLeft<<" rightFinished "<< result.finishedRight
+                              <<" leftSize "<<result.leftSizeEstimate<<" rightSize "<<result.rightSizeEstimate);
         return result;
     }
 
@@ -265,35 +258,35 @@ public:
         size_t const nInstances = query->getInstancesCount();
         size_t const hashJoinThreshold = settings.getHashJoinThreshold();
         bool leftMaterialized = agreeOnBoolean(inputArrays[0]->isMaterialized(), query);
-        size_t exactLeftSize  = leftMaterialized ? globalComputeExactArraySize(inputArrays[0], query) : -1;
-        LOG4CXX_DEBUG(logger, "EJ left materialized "<<leftMaterialized<< " exact left size "<<exactLeftSize);
-        if(leftMaterialized && exactLeftSize < hashJoinThreshold && settings.isLeftOuter() == false)
+        size_t leftOverhead  = leftMaterialized ? globalComputeArrayOverhead<LEFT>(inputArrays[0], query, settings) : -1;
+        LOG4CXX_DEBUG(logger, "EJ left materialized "<<leftMaterialized<< " overhead "<<leftOverhead);
+        if(leftMaterialized && leftOverhead < hashJoinThreshold && settings.isLeftOuter() == false)
         {
             return Settings::HASH_REPLICATE_LEFT;
         }
         bool rightMaterialized = agreeOnBoolean(inputArrays[1]->isMaterialized(), query);
-        size_t exactRightSize = rightMaterialized ? globalComputeExactArraySize(inputArrays[1], query) : -1;
-        LOG4CXX_DEBUG(logger, "EJ right materialized "<<rightMaterialized<< " exact right size "<<exactRightSize);
-        if(rightMaterialized && exactRightSize < hashJoinThreshold && settings.isRightOuter() == false)
+        size_t rightOverhead = rightMaterialized ? globalComputeArrayOverhead<RIGHT>(inputArrays[1], query, settings) : -1;
+        LOG4CXX_DEBUG(logger, "EJ right materialized "<<rightMaterialized<< " overhead "<<rightOverhead);
+        if(rightMaterialized && rightOverhead < hashJoinThreshold && settings.isRightOuter() == false)
         {
             return Settings::HASH_REPLICATE_RIGHT;
         }
         if(leftMaterialized && rightMaterialized)
         {
-            return exactLeftSize < exactRightSize ? Settings::MERGE_LEFT_FIRST : Settings::MERGE_RIGHT_FIRST;
+            return leftOverhead < rightOverhead ? Settings::MERGE_LEFT_FIRST : Settings::MERGE_RIGHT_FIRST;
         }
         size_t leftArraysFinished =0;
         size_t rightArraysFinished=0;
-        size_t leftSizeEst = 0;
-        size_t rightSizeEst =0;
-        globalPreScan(inputArrays, query, settings, leftArraysFinished, rightArraysFinished, leftSizeEst, rightSizeEst);
-        LOG4CXX_DEBUG(logger, "EJ global prescan complete leftFinished "<<leftArraysFinished<<" rightFinished "<< rightArraysFinished<<" leftSizeEst "<<leftSizeEst<<
-                      " rightSizeEst "<<rightSizeEst);
-        if(leftArraysFinished == nInstances && leftSizeEst < hashJoinThreshold && settings.isLeftOuter() == false)
+        size_t leftOverheadEst = 0;
+        size_t rightOverheadEst =0;
+        globalPreScan(inputArrays, query, settings, leftArraysFinished, rightArraysFinished, leftOverheadEst, rightOverheadEst);
+        LOG4CXX_DEBUG(logger, "EJ global prescan complete leftFinished "<<leftArraysFinished<<" rightFinished "<< rightArraysFinished<<" leftOverhead "<<leftOverheadEst<<
+                      " rightOverhead "<<rightOverheadEst);
+        if(leftArraysFinished == nInstances && leftOverheadEst < hashJoinThreshold && settings.isLeftOuter() == false)
         {
             return Settings::HASH_REPLICATE_LEFT;
         }
-        if(rightArraysFinished == nInstances && rightSizeEst < hashJoinThreshold && settings.isRightOuter() == false)
+        if(rightArraysFinished == nInstances && rightOverheadEst < hashJoinThreshold && settings.isRightOuter() == false)
         {
             return Settings::HASH_REPLICATE_RIGHT;
         }
@@ -598,11 +591,11 @@ public:
         second = sortArray(second, query, settings);
         second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
-        size_t const firstSize  = computeExactArraySize(first, query);
-        size_t const secondSize = computeExactArraySize(second, query);
-        LOG4CXX_DEBUG(logger, "EJ merge after SG first size "<<firstSize<<" second size "<<secondSize);
+        size_t const firstOverhead  = computeArrayOverhead<WHICH_FIRST>(first, query, settings);
+        size_t const secondOverhead = computeArrayOverhead<WHICH_SECOND>(second, query, settings);
+        LOG4CXX_DEBUG(logger, "EJ merge after SG first overhead "<<firstOverhead<<" second overhead "<<secondOverhead);
         //if one of the arrays is small enough, and it's not being outer-joined, we can read it into table! Note: this is a local decision
-        if (firstSize < settings.getHashJoinThreshold() && ((WHICH_FIRST == LEFT && !LEFT_OUTER) || (WHICH_FIRST == RIGHT && !RIGHT_OUTER)))
+        if (firstOverhead < settings.getHashJoinThreshold() && ((WHICH_FIRST == LEFT && !LEFT_OUTER) || (WHICH_FIRST == RIGHT && !RIGHT_OUTER)))
         {
             LOG4CXX_DEBUG(logger, "EJ merge rehashing first");
             ArenaPtr operatorArena = this->getArena();
@@ -611,7 +604,7 @@ public:
             readIntoHashTable<WHICH_FIRST, READ_TUPLED> (first, table, settings);
             return arrayToTableJoin<WHICH_FIRST, READ_TUPLED, LEFT_OUTER || RIGHT_OUTER>( second, table, query, settings);
         }
-        else if(secondSize < settings.getHashJoinThreshold() && ((WHICH_FIRST == RIGHT && !LEFT_OUTER) || (WHICH_FIRST == LEFT && !RIGHT_OUTER)))
+        else if(secondOverhead < settings.getHashJoinThreshold() && ((WHICH_FIRST == RIGHT && !LEFT_OUTER) || (WHICH_FIRST == LEFT && !RIGHT_OUTER)))
         {
             LOG4CXX_DEBUG(logger, "EJ merge rehashing second");
             ArenaPtr operatorArena = this->getArena();
