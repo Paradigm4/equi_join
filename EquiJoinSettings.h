@@ -199,6 +199,7 @@ private:
         {
             try
             {
+                trim(tok);
                 names.push_back(tok);
             }
             catch (bad_lexical_cast const& exn)
