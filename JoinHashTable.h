@@ -149,7 +149,7 @@ private:
     vector<AttributeComparator>              _keyComparators;
     size_t const                             _numHashBuckets;
     mgd::vector<HashTableEntry*>             _buckets;
-    mgd::vector<Value>                       _values;
+    std::vector<Value>                       _values;
     ssize_t                                  _largeValueMemory;
     size_t                                   _numHashes;
     size_t                                   _numGroups;
@@ -164,7 +164,7 @@ public:
             _keyComparators(_settings.getKeyComparators()),
             _numHashBuckets(_settings.getNumHashBuckets()),
             _buckets(_arena, _numHashBuckets, NULL),
-            _values(_arena, 0),
+            _values(0),
             _largeValueMemory(0),
             _numHashes(0),
             _numGroups(0),
@@ -331,7 +331,8 @@ public:
             Value const* storedTuple = getTuple( (*entry)->idx);
             if(keysEqual(storedTuple, tuple))
             {
-                newGroup = 0; //let's insert equal data in the same order it came in (might come in handy later)
+                newGroup = 0;
+                break;
             }
             else if (!keysLess(storedTuple, tuple))
             {
@@ -375,7 +376,7 @@ public:
         {
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION)<<"inconsistent state size overflow";
         }
-        return _arena->allocated() + _largeValueMemory;
+        return _arena->allocated() + _values.size() * sizeof(Value)  + _largeValueMemory;
     }
 
     class const_iterator

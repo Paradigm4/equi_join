@@ -238,11 +238,15 @@ private:
     vector<Coordinate> _filterArrayOrigins;
     vector<Coordinate> _filterChunkSizes;
     BloomFilter        _chunkHits;
+    mutable vector<Coordinate> _coordBuf;
+    mutable vector<Coordinate> _oldBuf;
 
 public:
     ChunkFilter(Settings const& settings, ArrayDesc const& leftSchema, ArrayDesc const& rightSchema):
         _numJoinedDimensions(0),
-        _chunkHits(0) //reallocated if actually needed below
+        _chunkHits(0), //reallocated if actually needed below
+        _coordBuf(0),
+        _oldBuf(0)
     {
         size_t const numFilterAtts = WHICH == LEFT ? settings.getNumRightAttrs() : settings.getNumLeftAttrs();
         size_t const numFilterDims = WHICH == LEFT ? settings.getNumRightDims() : settings.getNumLeftDims();
@@ -262,6 +266,7 @@ public:
         if(_numJoinedDimensions != 0)
         {
             _chunkHits = BloomFilter(settings.getBloomFilterSize());
+            _coordBuf.resize(_numJoinedDimensions);
         }
         ostringstream message;
         message<<"EJ chunk filter initialized dimensions "<<_numJoinedDimensions<<", training fields ";
@@ -293,12 +298,15 @@ public:
         {
             return;
         }
-        Coordinates input(_numJoinedDimensions);
         for(size_t i=0; i<_numJoinedDimensions; ++i)
         {
-            input[i] = ((tuple[_trainingArrayFields[i]]->getInt64() - _filterArrayOrigins[i]) / _filterChunkSizes[i]) * _filterChunkSizes[i] + _filterArrayOrigins[i];
+            _coordBuf[i] = ((tuple[_trainingArrayFields[i]]->getInt64() - _filterArrayOrigins[i]) / _filterChunkSizes[i]) * _filterChunkSizes[i] + _filterArrayOrigins[i];
         }
-        _chunkHits.addData(&(input[0]), _numJoinedDimensions*sizeof(Coordinate));
+        if(_oldBuf.size() == 0 || _coordBuf != _oldBuf)
+        {
+            _chunkHits.addData(&(_coordBuf[0]), _numJoinedDimensions*sizeof(Coordinate));
+            _oldBuf = _coordBuf;
+        }
     }
 
     bool containsChunk(Coordinates const& inputChunkPos) const
@@ -307,12 +315,11 @@ public:
         {
             return true;
         }
-        Coordinates input(_numJoinedDimensions);
         for(size_t i=0; i<_numJoinedDimensions; ++i)
         {
-            input[i] = inputChunkPos[_filterArrayDimensions[i]];
+            _coordBuf[i] = inputChunkPos[_filterArrayDimensions[i]];
         }
-        bool result = _chunkHits.hasData(&input[0], _numJoinedDimensions*sizeof(Coordinate));
+        bool result = _chunkHits.hasData(&_coordBuf[0], _numJoinedDimensions*sizeof(Coordinate));
         return result;
     }
 
