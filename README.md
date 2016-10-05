@@ -96,6 +96,12 @@ sys	0m0.000s
 
 Here, `equi_join` detects that the join is on dimensions and uses a chunk filter structure to prevent irrelevant chunks from being scanned. The above is a lucky case for `cross_join` - as the number of attributes increases, the advantage of `equi_join` gets bigger. If the join is on attributes, `cross_join` definitely cannot keep up. Moreover `cross_join` always replicates the right array, no matter how large, to every instance; this is often disastrous. `equi_join` will adapt well regardless of the order of arguments, in most cases.
 
+One disadvantage at the moment is that `equi_join` is fully materializing. In a scenario such as:
+```
+equi_join(equi_join(A, B,..), C,..)
+```
+The inside operation is evaluated first, the output is materialized and then the outer operation is evaluated. This isn't always optimal. And in some cases nested `cross_join` can be faster. Hoping to make this more optimal soon.
+
 At the moment, `cross_join` remains useful for the Full Cartesian Product use case, i.e.:
 ```
 $ iquery -aq "cross_join(left, right)"
@@ -185,6 +191,7 @@ If it is determined (or user-dictated) that one of the arrays is small enough to
 If both arrays are sufficiently large, the smaller array's join keys are hashed and the hash is used to redistribute it such that each instance gets roughly an equal portion. Concurrently, a filter over chunk positions and a bloom filter over the join keys are built. The chunk and bloom filters are copied to every instance. The second array is then read - using the filters to eliminate unnecessary chunks and values - and redistributed along the same hash, ensuring co-location. Now that both arrays are colocated and their exact sizes are known, the algorithm may decide to read one of them into a hash table (if small enough) or sort both and join via a pass over two sorted sets.
 
 ## Future work
+ * make the operation not materializing when possible
  * pick join-on keys automatically by checking for matching names, if not supplied
  * better tuning for the Bloom Filter: choosing size and number of hash functions based on available memory
  * add the cross-product code path?
