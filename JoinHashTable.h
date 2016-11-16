@@ -28,11 +28,6 @@
 
 #include <query/Operator.h>
 #include <query/AttributeComparator.h>
-#include <util/arena/Set.h>
-#include <util/arena/Map.h>
-#include <util/arena/Vector.h>
-#include <util/arena/List.h>
-#include <util/Arena.h>
 #include <array/SortArray.h>
 #include <array/TupleArray.h>
 
