@@ -43,12 +43,12 @@ SRCS = LogicalEquiJoin.cpp \
 ifneq ("$(wildcard /usr/bin/g++-4.9)","")
  CC := "/usr/bin/gcc-4.9"
  CXX := "/usr/bin/g++-4.9"
- CCFLAGS+=-std=c++11 -DCPP11
+ CCFLAGS+=-std=c++14 -DCPP11
 else
  ifneq ("$(wildcard /opt/rh/devtoolset-3/root/usr/bin/gcc)","")
   CC := "/opt/rh/devtoolset-3/root/usr/bin/gcc"
   CXX := "/opt/rh/devtoolset-3/root/usr/bin/g++"
-  CCFLAGS+=-std=c++11 -DCPP11
+  CCFLAGS+=-std=c++14 -DCPP11
  endif
 endif
 
@@ -57,7 +57,7 @@ all: libequi_join.so
 clean:
 	rm -rf *.so *.o
 
-libequi_join.so: $(SRCS) ArrayIO.h EquiJoinSettings.h JoinHashTable.h 
+libequi_join.so: $(SRCS) ArrayIO.h EquiJoinSettings.h JoinHashTable.h EquiJoinParams.h
 	@if test ! -d "$(SCIDB)"; then echo  "Error. Try:\n\nmake SCIDB=<PATH TO SCIDB INSTALL PATH>"; exit 1; fi
 	$(CXX) $(CCFLAGS) $(INC) -o LogicalEquiJoin.o -c LogicalEquiJoin.cpp
 	$(CXX) $(CCFLAGS) $(INC) -o PhysicalEquiJoin.o -c PhysicalEquiJoin.cpp
