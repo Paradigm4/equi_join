@@ -39,6 +39,7 @@ std::shared_ptr<LogicalExpression>    parseExpression(const std::string&);
 
 namespace equi_join
 {
+#include "EquiJoinParams.h"
 
 using std::string;
 using std::vector;
@@ -138,6 +139,7 @@ private:
     size_t                        _bloomFilterSize;
     size_t                        _readAheadLimit;
     size_t                        _varSize;
+    bool                          _filterResult;
     string                        _filterExpressionString;
     shared_ptr<Expression>        _filterExpression;
     vector<string>                _leftNames;
@@ -145,15 +147,6 @@ private:
     bool                          _leftOuter;
     bool                          _rightOuter;
     vector<string>                _outNames;
-
-    static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
-    {
-        if(logical)
-        {
-            return evaluate(((shared_ptr<OperatorParamLogicalExpression>&) parameter)->getExpression(),query, TID_STRING).getString();
-        }
-        return ((shared_ptr<OperatorParamPhysicalExpression>&) parameter)->getExpression()->evaluate().getString();
-    }
 
     void setParamIds(string trimmedContent, vector<size_t> &keys, size_t shift)
     {
@@ -211,6 +204,7 @@ private:
 
     void setParamLeftNames(string trimmedContent)
     {
+        LOG4CXX_INFO(logger, "LeftName: " << trimmedContent);
         setParamNames(trimmedContent, _leftNames);
     }
 
@@ -224,39 +218,10 @@ private:
         setParamNames(trimmedContent, _outNames);
     }
 
-    void setParamHashJoinThreshold(string trimmedContent)
+    void setHashJoinThreshold(uint64_t res)
     {
-        try
-        {
-            int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res < 0)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "hash join threshold must be non negative";
-            }
-            _hashJoinThreshold = res * 1024 * 1204;
-            _numHashBuckets = chooseNumBuckets(_hashJoinThreshold / (1024*1024));
-        }
-        catch (bad_lexical_cast const& exn)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse hash join threshold";
-        }
-    }
-
-    void setParamChunkSize(string trimmedContent)
-    {
-        try
-        {
-            int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res <= 0)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "chunk size must be positive";
-            }
-            _chunkSize = res;
-        }
-        catch (bad_lexical_cast const& exn)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse chunk size";
-        }
+      _hashJoinThreshold = res * 1024 * 1204;
+      _numHashBuckets = chooseNumBuckets(_hashJoinThreshold / (1024*1024));
     }
 
     void setParamAlgorithm(string trimmedContent)
@@ -283,66 +248,6 @@ private:
         }
     }
 
-    bool setParamBool(string trimmedContent, bool& value)
-    {
-        if(trimmedContent == "1" || trimmedContent == "t" || trimmedContent == "T" || trimmedContent == "true" || trimmedContent == "TRUE")
-        {
-            value = true;
-            return true;
-        }
-        else if (trimmedContent == "0" || trimmedContent == "f" || trimmedContent == "F" || trimmedContent == "false" || trimmedContent == "FALSE")
-        {
-            value = false;
-            return true;
-        }
-        return false;
-    }
-
-    void setParamKeepDimensions(string trimmedContent)
-    {
-        if(!setParamBool(trimmedContent, _keepDimensions))
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse keep_dimensions";
-        }
-    }
-
-    void setParamBloomFilterSize(string trimmedContent)
-    {
-        try
-        {
-            int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res <= 0)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "bloom filter size size must be positive";
-            }
-            _bloomFilterSize = res;
-        }
-        catch (bad_lexical_cast const& exn)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse bloom filter size";
-        }
-    }
-
-    void setParamFilterExpression(string trimmedContent)
-    {
-        _filterExpressionString = trimmedContent;
-    }
-
-    void setParamLeftOuter(string trimmedContent)
-    {
-        if(!setParamBool(trimmedContent, _leftOuter))
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse left_outer";
-        }
-    }
-
-    void setParamRightOuter(string trimmedContent)
-    {
-        if(!setParamBool(trimmedContent, _rightOuter))
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse right_outer";
-        }
-    }
 
     void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
     {
@@ -360,12 +265,13 @@ private:
     }
 
 public:
-    static size_t const MAX_PARAMETERS = 11;
+    static size_t const MAX_PARAMETERS = 2;
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
              bool logical,
-             shared_ptr<Query>& query):
+             shared_ptr<Query>& query,
+	     EquiJoinParams ejp):
         _leftSchema(*(inputSchemas[0])),
         _rightSchema(*(inputSchemas[1])),
         _numLeftAttrs(_leftSchema.getAttributes(true).size()),
@@ -386,104 +292,69 @@ public:
         _rightOuter(false),
         _outNames(0)
     {
-        string const leftIdsHeader                 = "left_ids=";
-        string const rightIdsHeader                = "right_ids=";
-        string const leftNamesHeader               = "left_names=";
-        string const rightNamesHeader              = "right_names=";
-        string const hashJoinThresholdHeader       = "hash_join_threshold=";
-        string const chunkSizeHeader               = "chunk_size=";
-        string const algorithmHeader               = "algorithm=";
-        string const keepDimensionsHeader          = "keep_dimensions=";
-        string const bloomFilterSizeHeader         = "bloom_filter_size=";
-        string const filterExpressionHeader        = "filter:";
-        string const leftOuterHeader               = "left_outer=";
-        string const rightOuterHeader              = "right_outer=";
-        string const outNamesHeader                = "out_names=";
-        bool leftIdsSet            = false;
-        bool rightIdsSet           = false;
-        bool leftNamesSet          = false;
-        bool rightNamesSet         = false;
-        bool hashJoinThresholdSet  = false;
-        bool chunkSizeSet          = false;
-        bool keepDimensionsSet     = false;
-        bool bloomFilterSizeSet    = false;
-        bool filterExpressionSet   = false;
-        bool leftOuterSet          = false;
-        bool rightOuterSet         = false;
-        bool outNamesSet           = false;
         size_t const nParams = operatorParameters.size();
         if (nParams > MAX_PARAMETERS)
         {   //assert-like exception. Caller should have taken care of this!
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "illegal number of parameters passed to equi_join";
         }
-        for (size_t i= 0; i<nParams; ++i)
-        {
-            string parameterString = paramToString(operatorParameters[i], query, logical);
-            if (starts_with(parameterString, leftIdsHeader))
-            {
-                setParam(parameterString, leftIdsSet, leftIdsHeader, &Settings::setParamLeftIds);
-            }
-            else if (starts_with(parameterString, rightIdsHeader ))
-            {
-                setParam(parameterString, rightIdsSet, rightIdsHeader, &Settings::setParamRightIds);
-            }
-            else if (starts_with(parameterString, leftNamesHeader))
-            {
-                setParam(parameterString, leftNamesSet, leftNamesHeader, &Settings::setParamLeftNames);
-            }
-            else if (starts_with(parameterString, rightNamesHeader))
-            {
-                setParam(parameterString, rightNamesSet, rightNamesHeader, &Settings::setParamRightNames);
-            }
-            else if (starts_with(parameterString, hashJoinThresholdHeader))
-            {
-                setParam(parameterString, hashJoinThresholdSet, hashJoinThresholdHeader, &Settings::setParamHashJoinThreshold);
-            }
-            else if (starts_with(parameterString, chunkSizeHeader))
-            {
-                setParam(parameterString, chunkSizeSet, chunkSizeHeader, &Settings::setParamChunkSize);
-            }
-            else if (starts_with(parameterString, algorithmHeader))
-            {
-                setParam(parameterString, _algorithmSet, algorithmHeader, &Settings::setParamAlgorithm);
-            }
-            else if (starts_with(parameterString, keepDimensionsHeader))
-            {
-                setParam(parameterString, keepDimensionsSet, keepDimensionsHeader, &Settings::setParamKeepDimensions);
-            }
-            else if (starts_with(parameterString, bloomFilterSizeHeader))
-            {
-                setParam(parameterString, bloomFilterSizeSet, bloomFilterSizeHeader, &Settings::setParamBloomFilterSize);
-            }
-            else if (starts_with(parameterString, filterExpressionHeader))
-            {
-                setParam(parameterString, filterExpressionSet, filterExpressionHeader, &Settings::setParamFilterExpression);
-            }
-            else if (starts_with(parameterString, leftOuterHeader))
-            {
-                setParam(parameterString, leftOuterSet, leftOuterHeader, &Settings::setParamLeftOuter);
-            }
-            else if (starts_with(parameterString, rightOuterHeader))
-            {
-                setParam(parameterString, rightOuterSet, rightOuterHeader, &Settings::setParamRightOuter);
-            }
-            else if (starts_with(parameterString, outNamesHeader))
-            {
-                setParam(parameterString, outNamesSet, outNamesHeader, &Settings::setParamOutNames);
-            }
-            else
-            {
-                ostringstream error;
-                error << "Unrecognized token '"<<parameterString<<"'";
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
-            }
-        }
+	if (ejp.leftIdsSet)
+	{
+	  setParamLeftIds(ejp.leftIds);
+	}
+	if (ejp.rightIdsSet)
+	{
+	  setParamRightIds(ejp.rightIds);
+	}
+	if (ejp.leftNamesSet)
+	{
+	  setParamLeftNames(ejp.leftNames);
+	}
+	if (ejp.rightNamesSet)
+	{
+	  setParamRightNames(ejp.rightNames);
+	}
+	if (ejp.hashJoinThresholdSet)
+	{
+	  setHashJoinThreshold(ejp.hashJoinThreshold);
+	}
+	if (ejp.chunkSizeSet)
+	{
+	  _chunkSize = ejp.chunkSize;
+	}
+	if (ejp.algorithmSet)
+	{
+	  setParamAlgorithm(ejp.algorithm);
+	}
+	if (ejp.keepDimensionsSet)
+	{
+	  _keepDimensions = ejp.keepDimensions;
+	}
+	if (ejp.bloomFilterSizeSet)
+	{
+	  _bloomFilterSize = ejp.bloomFilterSize;
+	}
+	if (ejp.filterSet)
+	{
+	  _filterExpressionString = ejp.filter;
+	}
+	if (ejp.leftOuterSet)
+	{
+	  _leftOuter = ejp.leftOuter;
+	}
+	if (ejp.rightOuterSet)
+	{
+	  _rightOuter = ejp.rightOuter;
+	}
+	if (ejp.outNamesSet)
+	{
+	  setParamOutNames(ejp.outNames);
+	}
         verifyInputs();
         mapAttributes();
         checkOutputNames();
-        if(filterExpressionSet)
+        if(ejp.filterSet)
         {
-            compileExpression(query);
+	  compileExpression(query);
         }
         logSettings();
     }
@@ -695,7 +566,7 @@ private:
         inputDescs.push_back(inputDesc);
         ArrayDesc outputDesc =inputDesc;
         _filterExpression.reset(new Expression());
-        _filterExpression->compile(logicalExpr, query, false, TID_BOOL, inputDescs, outputDesc);
+        _filterExpression->compile(logicalExpr, false, TID_BOOL, inputDescs, outputDesc);
     }
 
     void logSettings()

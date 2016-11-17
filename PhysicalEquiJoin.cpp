@@ -624,12 +624,97 @@ public:
         }
     }
 
+    EquiJoinParams readParameters()
+    {
+        EquiJoinParams ejp;
+	Parameter leftIdsParam = findKeyword("left_ids");
+	if (leftIdsParam)
+	{
+	  ejp.leftIds = ((std::shared_ptr<OperatorParamPhysicalExpression>&)leftIdsParam)->getExpression()->evaluate().getString();
+	  ejp.leftIdsSet = true;
+	}
+	Parameter rightIdsParam = findKeyword("right_ids");
+        if (rightIdsParam)
+        {
+	  ejp.rightIds = ((std::shared_ptr<OperatorParamPhysicalExpression>&)rightIdsParam)->getExpression()->evaluate().getString();
+	  ejp.rightIdsSet = true;
+        }
+	Parameter leftNamesParam = findKeyword("left_names");
+	if (leftNamesParam)
+	{
+	  ejp.leftNames = ((std::shared_ptr<OperatorParamPhysicalExpression>&)leftNamesParam)->getExpression()->evaluate().getString();
+	  ejp.leftNamesSet = true;
+	}
+	Parameter rightNamesParam = findKeyword("right_names");
+	if (rightNamesParam)
+	{
+	  ejp.rightNames = ((std::shared_ptr<OperatorParamPhysicalExpression>&)rightNamesParam)->getExpression()->evaluate().getString();
+	  ejp.rightNamesSet = true;
+	}
+	Parameter hashJoinThresholdParam = findKeyword("hash_join_threshold");
+	if (hashJoinThresholdParam)
+	{
+	  ejp.hashJoinThreshold = ((std::shared_ptr<OperatorParamPhysicalExpression>&)hashJoinThresholdParam)->getExpression()->evaluate().getUint64();
+	  ejp.hashJoinThresholdSet = true;
+	}
+	Parameter chunkSizeParam = findKeyword("chunk_size");
+	if (chunkSizeParam)
+	{
+	  ejp.chunkSize = ((std::shared_ptr<OperatorParamPhysicalExpression>&)chunkSizeParam)->getExpression()->evaluate().getUint64();
+	  ejp.chunkSizeSet = true;
+        }
+	Parameter algorithmParam = findKeyword("algorithm");
+	if (algorithmParam)
+	{
+	  ejp.algorithm = ((std::shared_ptr<OperatorParamPhysicalExpression>&)algorithmParam)->getExpression()->evaluate().getString();
+	  ejp.algorithmSet = true;
+	}
+	Parameter keepDimensionsParam = findKeyword("keep_dimensions");
+	if (keepDimensionsParam)
+	{
+	  ejp.keepDimensions = ((std::shared_ptr<OperatorParamPhysicalExpression>&)keepDimensionsParam)->getExpression()->evaluate().getBool();
+	  ejp.keepDimensionsSet = true;
+        }
+	Parameter bloomFilterSizeParam = findKeyword("bloom_filter_size");
+	if (bloomFilterSizeParam)
+        {
+	  ejp.bloomFilterSize = ((std::shared_ptr<OperatorParamPhysicalExpression>&)bloomFilterSizeParam)->getExpression()->evaluate().getUint64();
+	  ejp.bloomFilterSizeSet = true;
+        }
+	Parameter filterParam = findKeyword("filter");
+	if (filterParam)
+	{
+	  ejp.filter = ((std::shared_ptr<OperatorParamPhysicalExpression>&)filterParam)->getExpression()->evaluate().getString();
+	  ejp.filterSet = true;
+        }
+	Parameter leftOuterParam = findKeyword("left_outer");
+	if (leftOuterParam)
+        {
+	  ejp.leftOuter = ((std::shared_ptr<OperatorParamPhysicalExpression>&)leftOuterParam)->getExpression()->evaluate().getBool();
+	  ejp.leftOuterSet = true;
+        }
+	Parameter rightOuterParam = findKeyword("right_outer");
+	if (rightOuterParam)
+	{
+	  ejp.rightOuter = ((std::shared_ptr<OperatorParamPhysicalExpression>&)rightOuterParam)->getExpression()->evaluate().getBool();
+	  ejp.rightOuterSet = true;
+        }
+	Parameter outNamesParam = findKeyword("out_names");
+	if (outNamesParam) 
+	{
+	  ejp.outNames = ((std::shared_ptr<OperatorParamPhysicalExpression>&)outNamesParam)->getExpression()->evaluate().getString();
+	  ejp.outNamesSet = true;
+        }
+	return ejp;
+    }
+
     shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
     {
         vector<ArrayDesc const*> inputSchemas(2);
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
-        Settings settings(inputSchemas, _parameters, false, query);
+	EquiJoinParams ejp = readParameters();
+        Settings settings(inputSchemas, _parameters, false, query, ejp);
         Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
         if(algo == Settings::HASH_REPLICATE_LEFT)
         {
