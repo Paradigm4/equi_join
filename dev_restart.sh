@@ -10,7 +10,7 @@ set -x
 mydir=`dirname $0`
 pushd $mydir
 make clean
-make SCIDB=$SCIDB_INSTALL SCIDB_THIRDPARTY_PREFIX=/opt/scidb/15.12
+make SCIDB=$SCIDB_INSTALL SCIDB_THIRDPARTY_PREFIX=/opt/scidb/16.9
 scidb.py stopall $DBNAME 
 cp libequi_join.so $SCIDB_INSTALL/lib/scidb/plugins/
 scidb.py startall $DBNAME
