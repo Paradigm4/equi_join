@@ -150,7 +150,7 @@ private:
     {
         if(logical)
         {
-            return evaluate(((shared_ptr<OperatorParamLogicalExpression>&) parameter)->getExpression(),query, TID_STRING).getString();
+            return evaluate(((std::shared_ptr<OperatorParamLogicalExpression>&)parameter)->getExpression(), TID_STRING).getString();
         }
         return ((shared_ptr<OperatorParamPhysicalExpression>&) parameter)->getExpression()->evaluate().getString();
     }
@@ -695,7 +695,7 @@ private:
         inputDescs.push_back(inputDesc);
         ArrayDesc outputDesc =inputDesc;
         _filterExpression.reset(new Expression());
-        _filterExpression->compile(logicalExpr, query, false, TID_BOOL, inputDescs, outputDesc);
+        _filterExpression->compile(logicalExpr, false, TID_BOOL, inputDescs, outputDesc);
     }
 
     void logSettings()
