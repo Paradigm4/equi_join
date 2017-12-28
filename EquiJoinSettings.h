@@ -887,7 +887,7 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, 0, input.getAliases());
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
         }
         for(size_t i =0; i<numLeftDims; ++i)
         {
@@ -903,7 +903,7 @@ public:
                 flags = AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, 0);
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, CompressorType::NONE);
         }
         for(AttributeID i =0; i<numRightAttrs; ++i)
         {
@@ -919,7 +919,7 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, 0, input.getAliases());
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
         }
         for(size_t i =0; i<numRightDims; ++i)
         {
@@ -930,7 +930,7 @@ public:
             }
             DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, 0);
+            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
         }
         outputAttributes = addEmptyTagAttribute(outputAttributes);
         Dimensions outputDimensions;
