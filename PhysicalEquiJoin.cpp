@@ -370,7 +370,7 @@ public:
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
         shared_ptr<Array> redistributed = (WHICH_REPLICATED == LEFT ? inputArrays[0] : inputArrays[1]);
-        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query);
+        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query, getShared());
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, WHICH_REPLICATED == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
@@ -429,7 +429,7 @@ public:
         }
         SortArray sorter(inputArray->getArrayDesc(), _arena, false, settings.getChunkSize());
         shared_ptr<TupleComparator> tcomp(make_shared<TupleComparator>(sortingAttributeInfos, inputArray->getArrayDesc()));
-        return sorter.getSortedArray(inputArray, query, tcomp);
+        return sorter.getSortedArray(inputArray, query, getShared(), tcomp);
     }
 
     template <Handedness WHICH>
@@ -578,7 +578,7 @@ public:
         first = readIntoPreSort<WHICH_FIRST, KEEP_FIRST_NULL_TUPLES, HASH_NULLS>(first, query, settings, chunkFilter.get(), NULL, bloomFilter.get(), NULL);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<WHICH_FIRST>(first, query, settings);
-        first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
+        first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, getShared());
         if(chunkFilter.get())
         {
             chunkFilter->globalExchange(query);
@@ -590,7 +590,7 @@ public:
         second = readIntoPreSort<WHICH_SECOND, KEEP_SECOND_NULL_TUPLES, HASH_NULLS>(second, query, settings, NULL, chunkFilter.get(), NULL, bloomFilter.get());
         second = sortArray(second, query, settings);
         second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
-        second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, true);
+        second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, getShared());
         size_t const firstOverhead  = computeArrayOverhead<WHICH_FIRST>(first, query, settings);
         size_t const secondOverhead = computeArrayOverhead<WHICH_SECOND>(second, query, settings);
         LOG4CXX_DEBUG(logger, "EJ merge after SG first overhead "<<firstOverhead<<" second overhead "<<secondOverhead);

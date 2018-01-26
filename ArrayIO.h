@@ -337,7 +337,7 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
 {
     size_t const numAttrs = ( WHICH == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize()) + 1; //plus hash
     Attributes outputAttributes(numAttrs);
-    outputAttributes[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0,0);
+    outputAttributes[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0, CompressorType::NONE);
     ArrayDesc const& inputSchema = ( WHICH == LEFT ? settings.getLeftSchema() : settings.getRightSchema());
     size_t const numInputAttrs = (WHICH == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
     size_t const numInputDims = (WHICH == LEFT ? settings.getNumLeftDims() : settings.getNumRightDims());
@@ -350,7 +350,7 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
         {
             flags |= AttributeDesc::IS_NULLABLE;
         }
-        outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, 0);
+        outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, CompressorType::NONE);
     }
     for(size_t i = 0; i< numInputDims; ++i )
     {
@@ -360,7 +360,7 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
             continue;
         }
         DimensionDesc const& inputDim = inputSchema.getDimensions()[i];
-        outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, 0);
+        outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, CompressorType::NONE);
     }
     outputAttributes = addEmptyTagAttribute(outputAttributes);
     Dimensions outputDimensions;
