@@ -212,7 +212,7 @@ public:
               }
            }
            shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            for(InstanceID i=0; i<nInstances; ++i)
            {
               if(i != myId)
