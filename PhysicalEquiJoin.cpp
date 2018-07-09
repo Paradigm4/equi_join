@@ -78,7 +78,7 @@ public:
         size_t const nInstances = query->getInstancesCount();
         InstanceID myId = query->getInstanceID();
         std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
-        *((size_t*) buf->getData()) = overhead;
+        *((size_t*) buf->getWriteData()) = overhead;
         for(InstanceID i=0; i<nInstances; i++)
         {
            if(i != myId)
@@ -91,7 +91,7 @@ public:
            if(i != myId)
            {
                buf = BufReceive(i,query);
-               size_t otherInstanceSize = *((size_t*) buf->getData());
+               size_t otherInstanceSize = *((size_t*) buf->getWriteData());
                overhead += otherInstanceSize;
            }
         }
@@ -106,7 +106,7 @@ public:
     {
         std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(bool)));
         InstanceID myId = query->getInstanceID();
-        *((bool*) buf->getData()) = value;
+        *((bool*) buf->getWriteData()) = value;
         for(InstanceID i=0; i<query->getInstancesCount(); i++)
         {
             if(i != myId)
@@ -119,7 +119,7 @@ public:
             if(i != myId)
             {
                 buf = BufReceive(i,query);
-                bool otherInstanceVal = *((bool*) buf->getData());
+                bool otherInstanceVal = *((bool*) buf->getWriteData());
                 value = value && otherInstanceVal;
             }
         }
@@ -221,7 +221,7 @@ public:
         rightSizeEst+=localResult.rightSizeEstimate;
         shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(PreScanResult)));
         InstanceID myId = query->getInstanceID();
-        *((PreScanResult*) buf->getData()) = localResult;
+        *((PreScanResult*) buf->getWriteData()) = localResult;
         for(InstanceID i=0; i<query->getInstancesCount(); i++)
         {
             if(i != myId)
@@ -234,7 +234,7 @@ public:
             if(i != myId)
             {
                 buf = BufReceive(i,query);
-                PreScanResult otherInstanceResult = *((PreScanResult*) buf->getData());
+                PreScanResult otherInstanceResult = *((PreScanResult*) buf->getWriteData());
                 if(otherInstanceResult.finishedLeft)
                 {
                     leftFinished++;

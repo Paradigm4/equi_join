@@ -190,7 +190,7 @@ public:
         {
            InstanceID coordinator = query->getCoordinatorID();
            shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            BufSend(coordinator, buf, query);
            buf = BufReceive(coordinator,query);
            BitVector incoming(_vec.getBitSize(), buf->getData());
@@ -212,7 +212,7 @@ public:
               }
            }
            shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            for(InstanceID i=0; i<nInstances; ++i)
            {
               if(i != myId)
