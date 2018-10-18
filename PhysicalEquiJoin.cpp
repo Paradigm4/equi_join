@@ -23,8 +23,10 @@
 * END_COPYRIGHT
 */
 
-#include <query/Operator.h>
+#define LEGACY_API
+#include <query/PhysicalOperator.h>
 #include <array/SortArray.h>
+#include <array/ArrayDesc.h>
 
 #include "ArrayIO.h"
 #include "JoinHashTable.h"
@@ -54,7 +56,14 @@ public:
                std::vector<RedistributeContext> const& inputDistributions,
                std::vector< ArrayDesc> const& inputSchemas) const
     {
-        return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
+        assertConsistency(inputSchemas[0], inputDistributions[0]);
+        assertConsistency(inputSchemas[1], inputDistributions[1]);
+
+        RedistributeContext distro = PhysicalOperator::getOutputDistribution(inputDistributions,
+                                                                             inputSchemas);
+        LOG4CXX_TRACE(logger, "equi_join() output distro: "<< distro);
+        return distro;
+        //        return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
     }
 
     template<Handedness WHICH>
@@ -78,7 +87,7 @@ public:
         size_t const nInstances = query->getInstancesCount();
         InstanceID myId = query->getInstanceID();
         std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
-        *((size_t*) buf->getData()) = overhead;
+        *((size_t*) buf->getWriteData()) = overhead;
         for(InstanceID i=0; i<nInstances; i++)
         {
            if(i != myId)
@@ -91,7 +100,7 @@ public:
            if(i != myId)
            {
                buf = BufReceive(i,query);
-               size_t otherInstanceSize = *((size_t*) buf->getData());
+               size_t otherInstanceSize = *((size_t*) buf->getWriteData());
                overhead += otherInstanceSize;
            }
         }
@@ -106,7 +115,7 @@ public:
     {
         std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(bool)));
         InstanceID myId = query->getInstanceID();
-        *((bool*) buf->getData()) = value;
+        *((bool*) buf->getWriteData()) = value;
         for(InstanceID i=0; i<query->getInstancesCount(); i++)
         {
             if(i != myId)
@@ -119,7 +128,7 @@ public:
             if(i != myId)
             {
                 buf = BufReceive(i,query);
-                bool otherInstanceVal = *((bool*) buf->getData());
+                bool otherInstanceVal = *((bool*) buf->getWriteData());
                 value = value && otherInstanceVal;
             }
         }
@@ -221,7 +230,7 @@ public:
         rightSizeEst+=localResult.rightSizeEstimate;
         shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(PreScanResult)));
         InstanceID myId = query->getInstanceID();
-        *((PreScanResult*) buf->getData()) = localResult;
+        *((PreScanResult*) buf->getWriteData()) = localResult;
         for(InstanceID i=0; i<query->getInstancesCount(); i++)
         {
             if(i != myId)
@@ -234,7 +243,7 @@ public:
             if(i != myId)
             {
                 buf = BufReceive(i,query);
-                PreScanResult otherInstanceResult = *((PreScanResult*) buf->getData());
+                PreScanResult otherInstanceResult = *((PreScanResult*) buf->getWriteData());
                 if(otherInstanceResult.finishedLeft)
                 {
                     leftFinished++;
@@ -370,7 +379,7 @@ public:
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
         shared_ptr<Array> redistributed = (WHICH_REPLICATED == LEFT ? inputArrays[0] : inputArrays[1]);
-        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query, getShared());
+        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query, shared_from_this());
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, WHICH_REPLICATED == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
@@ -427,9 +436,9 @@ public:
             sortingAttributeInfos[k+1].columnNo = k;
             sortingAttributeInfos[k+1].ascent = true;
         }
-        SortArray sorter(inputArray->getArrayDesc(), _arena, false, settings.getChunkSize());
+        SortArray sorter(inputArray->getArrayDesc(), _arena);
         shared_ptr<TupleComparator> tcomp(make_shared<TupleComparator>(sortingAttributeInfos, inputArray->getArrayDesc()));
-        return sorter.getSortedArray(inputArray, query, getShared(), tcomp);
+        return sorter.getSortedArray(inputArray, query, shared_from_this(), tcomp);
     }
 
     template <Handedness WHICH>
@@ -578,7 +587,7 @@ public:
         first = readIntoPreSort<WHICH_FIRST, KEEP_FIRST_NULL_TUPLES, HASH_NULLS>(first, query, settings, chunkFilter.get(), NULL, bloomFilter.get(), NULL);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<WHICH_FIRST>(first, query, settings);
-        first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, getShared());
+        first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, shared_from_this());
         if(chunkFilter.get())
         {
             chunkFilter->globalExchange(query);
@@ -590,7 +599,7 @@ public:
         second = readIntoPreSort<WHICH_SECOND, KEEP_SECOND_NULL_TUPLES, HASH_NULLS>(second, query, settings, NULL, chunkFilter.get(), NULL, bloomFilter.get());
         second = sortArray(second, query, settings);
         second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
-        second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, getShared());
+        second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, shared_from_this());
         size_t const firstOverhead  = computeArrayOverhead<WHICH_FIRST>(first, query, settings);
         size_t const secondOverhead = computeArrayOverhead<WHICH_SECOND>(second, query, settings);
         LOG4CXX_DEBUG(logger, "EJ merge after SG first overhead "<<firstOverhead<<" second overhead "<<secondOverhead);

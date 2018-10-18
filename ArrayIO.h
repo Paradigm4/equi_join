@@ -26,9 +26,15 @@
 #ifndef ARRAY_WRITER_H
 #define ARRAY_WRITER_H
 
+#include <array/ArrayIterator.h>
+#include <array/MemArray.h>
+#include <network/Network.h>
+#include <query/Query.h>
+#include <query/Expression.h>
+#include <system/Config.h>
+
 #include "EquiJoinSettings.h"
 #include "JoinHashTable.h"
-#include <util/Network.h>
 
 namespace scidb
 {
@@ -190,10 +196,10 @@ public:
         {
            InstanceID coordinator = query->getCoordinatorID();
            shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            BufSend(coordinator, buf, query);
            buf = BufReceive(coordinator,query);
-           BitVector incoming(_vec.getBitSize(), buf->getData());
+           BitVector incoming(_vec.getBitSize(), buf->getWriteData());
            _vec = incoming;
         }
         else
@@ -207,12 +213,12 @@ public:
                   {
                       throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "exchanging unequal bit vectors";
                   }
-                  BitVector incoming(_vec.getBitSize(), inBuf->getData());
+                  BitVector incoming(_vec.getBitSize(), inBuf->getWriteData());
                   _vec.orIn(incoming);
               }
            }
            shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
-           memcpy(buf->getData(), _vec.getData(), _vec.getByteSize());
+           memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            for(InstanceID i=0; i<nInstances; ++i)
            {
               if(i != myId)
@@ -337,7 +343,8 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
 {
     size_t const numAttrs = ( WHICH == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize()) + 1; //plus hash
     Attributes outputAttributes(numAttrs);
-    outputAttributes[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0, CompressorType::NONE);
+    std::vector<AttributeDesc> tmpOutput(numAttrs);
+    tmpOutput[numAttrs-1] = AttributeDesc(numAttrs-1, "hash", TID_UINT32, 0, CompressorType::NONE);
     ArrayDesc const& inputSchema = ( WHICH == LEFT ? settings.getLeftSchema() : settings.getRightSchema());
     size_t const numInputAttrs = (WHICH == LEFT ? settings.getNumLeftAttrs() : settings.getNumRightAttrs());
     size_t const numInputDims = (WHICH == LEFT ? settings.getNumLeftDims() : settings.getNumRightDims());
@@ -350,7 +357,7 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
         {
             flags |= AttributeDesc::IS_NULLABLE;
         }
-        outputAttributes[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, CompressorType::NONE);
+        tmpOutput[destinationId] = AttributeDesc(destinationId, input.getName(), input.getType(), flags, CompressorType::NONE);
     }
     for(size_t i = 0; i< numInputDims; ++i )
     {
@@ -360,14 +367,18 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
             continue;
         }
         DimensionDesc const& inputDim = inputSchema.getDimensions()[i];
-        outputAttributes[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, CompressorType::NONE);
+        tmpOutput[destinationId] = AttributeDesc(destinationId, inputDim.getBaseName(), TID_INT64, 0, CompressorType::NONE);
     }
-    outputAttributes = addEmptyTagAttribute(outputAttributes);
+    for (size_t i = 0; i< numAttrs; ++i) {
+        const AttributeDesc pushable(tmpOutput[i]);
+        outputAttributes.push_back(pushable);
+    }
+    outputAttributes.addEmptyTagAttribute();
     Dimensions outputDimensions;
     outputDimensions.push_back(DimensionDesc("dst_instance_id", 0, query->getInstancesCount()-1,             1,         0));
     outputDimensions.push_back(DimensionDesc("src_instance_id", 0, query->getInstancesCount()-1,             1,         0));
     outputDimensions.push_back(DimensionDesc("value_no",        0, CoordinateBounds::getMax(),               settings.getChunkSize(), 0));
-    return ArrayDesc("equi_join_state" , outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
+    return ArrayDesc("equi_join_state" , outputAttributes, outputDimensions, createDistribution(defaultPartitioning()), query->getDefaultArrayResidency());
 }
 
 enum WriteArrayType
@@ -406,6 +417,7 @@ private:
 public:
     ArrayWriter(Settings const& settings, shared_ptr<Query> const& query, ArrayDesc const& schema):
         _output           (std::make_shared<MemArray>( schema, query)),
+//        _output           (new MemArray( schema, query)),
         _myInstanceId     (query->getInstanceID()),
         _numInstances     (query->getInstancesCount()),
         _numAttributes    (_output->getArrayDesc().getAttributes(true).size() ),

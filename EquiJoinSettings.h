@@ -26,9 +26,12 @@
 #ifndef EQUI_JOIN_SETTINGS
 #define EQUI_JOIN_SETTINGS
 
-#include <query/Operator.h>
+#define LEGACY_API
+#include <query/LogicalOperator.h>
 #include <query/Expression.h>
+#include <query/Query.h>
 #include <query/AttributeComparator.h>
+#include <system/Config.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
 
@@ -871,6 +874,7 @@ public:
     ArrayDesc getOutputSchema(shared_ptr< Query> const& query) const
     {
         Attributes outputAttributes(getNumOutputAttrs());
+        std::vector<AttributeDesc> tmpOutput(getNumOutputAttrs());
         ArrayDesc const& leftSchema = getLeftSchema();
         size_t const numLeftAttrs = getNumLeftAttrs();
         size_t const numLeftDims  = getNumLeftDims();
@@ -887,7 +891,7 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            tmpOutput[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
         }
         for(size_t i =0; i<numLeftDims; ++i)
         {
@@ -903,7 +907,7 @@ public:
                 flags = AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, CompressorType::NONE);
+            tmpOutput[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, CompressorType::NONE);
         }
         for(AttributeID i =0; i<numRightAttrs; ++i)
         {
@@ -919,7 +923,7 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            tmpOutput[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
         }
         for(size_t i =0; i<numRightDims; ++i)
         {
@@ -930,17 +934,21 @@ public:
             }
             DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
+            tmpOutput[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
         }
-        outputAttributes = addEmptyTagAttribute(outputAttributes);
+        for (size_t i = 0; i < getNumOutputAttrs(); ++i) {
+            const AttributeDesc pushable(tmpOutput[i]);
+            outputAttributes.push_back(pushable);
+        }
+        outputAttributes.addEmptyTagAttribute();
+
         Dimensions outputDimensions;
         outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
         outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc("equi_join", outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
+        return ArrayDesc("equi_join", outputAttributes, outputDimensions, createDistribution(defaultPartitioning()), query->getDefaultArrayResidency());
     }
 };
 
 } } //namespaces
 
 #endif //EQUI_JOIN_SETTINGS
-

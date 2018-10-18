@@ -26,10 +26,11 @@
 #ifndef JOINHASHTABLE_H_
 #define JOINHASHTABLE_H_
 
-#include <query/Operator.h>
+#include <query/PhysicalOperator.h>
 #include <query/AttributeComparator.h>
 #include <array/SortArray.h>
 #include <array/TupleArray.h>
+#include <system/Config.h>
 
 #include "EquiJoinSettings.h"
 
