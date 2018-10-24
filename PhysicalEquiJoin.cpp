@@ -600,6 +600,7 @@ public:
         second = sortArray(second, query, settings);
         second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
         second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, shared_from_this());
+
         size_t const firstOverhead  = computeArrayOverhead<WHICH_FIRST>(first, query, settings);
         size_t const secondOverhead = computeArrayOverhead<WHICH_SECOND>(second, query, settings);
         LOG4CXX_DEBUG(logger, "EJ merge after SG first overhead "<<firstOverhead<<" second overhead "<<secondOverhead);
@@ -638,7 +639,7 @@ public:
         vector<ArrayDesc const*> inputSchemas(2);
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
-        Settings settings(inputSchemas, _parameters, false, query);
+        Settings settings(inputSchemas, _parameters, _kwParameters, query);
         Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
         if(algo == Settings::HASH_REPLICATE_LEFT)
         {

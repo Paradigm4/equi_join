@@ -54,7 +54,83 @@ public:
                     RE(PP(PLACEHOLDER_CONSTANT, TID_STRING))
                  })
               })
-            }
+            },
+            { KW_LEFT_IDS, RE(RE::OR, {
+                              RE(PP(PLACEHOLDER_EXPRESSION, TID_INT64)),
+                              RE(RE::GROUP, {
+                                     RE(PP(PLACEHOLDER_EXPRESSION, TID_INT64)),
+                                     RE(RE::PLUS, {
+                                        RE(PP(PLACEHOLDER_EXPRESSION, TID_INT64))
+                                     })
+                                 })
+                              })
+            },
+            { KW_RIGHT_IDS, RE(RE::OR, {
+                              RE(PP(PLACEHOLDER_EXPRESSION, TID_INT64)),
+                              RE(RE::GROUP, {
+                                     RE(PP(PLACEHOLDER_EXPRESSION, TID_INT64)),
+                                     RE(RE::PLUS, {
+                                        RE(PP(PLACEHOLDER_EXPRESSION, TID_INT64))
+                                     })
+                                  })
+                             })
+            },
+            { KW_LEFT_NAMES, RE(RE::OR, {
+                                RE(RE::OR, {
+                                      RE(PP(PLACEHOLDER_DIMENSION_NAME)),
+                                      RE(PP(PLACEHOLDER_ATTRIBUTE_NAME))
+                                   }),
+                                RE(RE::GROUP, {
+                                     RE(RE::OR, {
+                                        RE(PP(PLACEHOLDER_DIMENSION_NAME)),
+                                        RE(PP(PLACEHOLDER_ATTRIBUTE_NAME))
+                                     }),
+                                     RE(RE::PLUS, {
+                                        RE(RE::OR, {
+                                           RE(PP(PLACEHOLDER_DIMENSION_NAME)),
+                                           RE(PP(PLACEHOLDER_ATTRIBUTE_NAME))
+                                        })
+                                     })
+                                  })
+                             })
+            },
+            { KW_RIGHT_NAMES, RE(RE::OR, {
+                              RE(RE::OR, {
+                                 RE(PP(PLACEHOLDER_DIMENSION_NAME)),
+                                 RE(PP(PLACEHOLDER_ATTRIBUTE_NAME))
+                              }),
+                              RE(RE::GROUP, {
+                                     RE(RE::OR, {
+                                         RE(PP(PLACEHOLDER_DIMENSION_NAME)),
+                                         RE(PP(PLACEHOLDER_ATTRIBUTE_NAME))
+                                     }),
+                                     RE(RE::PLUS, {
+                                        RE(RE::OR, {
+                                           RE(PP(PLACEHOLDER_DIMENSION_NAME)),
+                                           RE(PP(PLACEHOLDER_ATTRIBUTE_NAME))
+                                        })
+                                     })
+                                  })
+                             })
+            },
+            { KW_HASH_JOIN_THRES, RE(PP(PLACEHOLDER_CONSTANT, TID_INT64)) },
+            { KW_CHUNK_SIZE, RE(PP(PLACEHOLDER_CONSTANT, TID_INT64)) },
+            { KW_ALGORITHM, RE(PP(PLACEHOLDER_CONSTANT, TID_STRING)) },
+            { KW_KEEP_DIMS, RE(PP(PLACEHOLDER_CONSTANT, TID_BOOL)) },
+            { KW_BLOOM_FILT_SZ, RE(PP(PLACEHOLDER_CONSTANT, TID_INT64)) },
+            { KW_FILTER, RE(PP(PLACEHOLDER_EXPRESSION, TID_BOOL)) },
+            { KW_LEFT_OUTER, RE(PP(PLACEHOLDER_EXPRESSION, TID_BOOL)) },
+            { KW_RIGHT_OUTER, RE(PP(PLACEHOLDER_EXPRESSION, TID_BOOL)) },
+            { KW_OUT_NAMES, RE(RE::OR, {
+                               RE(PP(PLACEHOLDER_ATTRIBUTE_NAME).setMustExist(false)),
+                               RE(RE::GROUP, {
+                                  RE(PP(PLACEHOLDER_ATTRIBUTE_NAME).setMustExist(false)),
+                                  RE(RE::PLUS, {
+                                     RE(PP(PLACEHOLDER_ATTRIBUTE_NAME).setMustExist(false))
+                                  })
+                               })
+                            })
+             }
         };
         return &argSpec;
     }
@@ -62,9 +138,10 @@ public:
     ArrayDesc inferSchema(vector< ArrayDesc> schemas, shared_ptr< Query> query)
     {
         vector<ArrayDesc const*> inputSchemas;
+
         inputSchemas.push_back(&(schemas[0]));
         inputSchemas.push_back(&(schemas[1]));
-        Settings settings(inputSchemas, _parameters, true, query);
+        Settings settings(inputSchemas, _parameters, _kwParameters, query);
         return settings.getOutputSchema(query);
     }
 };
