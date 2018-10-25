@@ -110,19 +110,19 @@ iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, algorithm:'mer
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 7" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c                                                                                         ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'hash_replicate_left'                                                        ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'hash_replicate_right'                                                       ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_left_first'                                                           ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_right_first'                                                          ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_left_first',     hash_join_threshold:0                              ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_right_first',    hash_join_threshold:0                              ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'hash_replicate_left', keep_dimensions:1                          ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'hash_replicate_right',keep_dimensions:1                          ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_left_first',    keep_dimensions:1                          ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_right_first',   keep_dimensions:1                          ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_left_first',    hash_join_threshold:0, keep_dimensions:1 ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_right_first',   hash_join_threshold:0, keep_dimensions:1 ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c'                                                                                         ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'hash_replicate_left'                                                        ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'hash_replicate_right'                                                       ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_left_first'                                                           ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_right_first'                                                          ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_left_first',     hash_join_threshold:0                              ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_right_first',    hash_join_threshold:0                              ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'hash_replicate_left', keep_dimensions:1                          ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'hash_replicate_right',keep_dimensions:1                          ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_left_first',    keep_dimensions:1                          ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_right_first',   keep_dimensions:1                          ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_left_first',    hash_join_threshold:0, keep_dimensions:1 ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_right_first',   hash_join_threshold:0, keep_dimensions:1 ))" >> $OUTFILE 2>&1
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 8" >> $OUTFILE 2>&1
@@ -226,19 +226,19 @@ iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, algorithm:'mer
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 15" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c                                                                     , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'hash_replicate_left'                                    , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'hash_replicate_right'                                   , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_left_first'                                       , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_right_first'                                      , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_left_first',     hash_join_threshold:0          , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_right_first',    hash_join_threshold:0          , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'hash_replicate_left', keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'hash_replicate_right',keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_left_first',    keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_right_first',   keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_left_first',    hash_join_threshold:0, keep_dimensions:1, chunk_size:1 ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_right_first',   hash_join_threshold:0, keep_dimensions:1, chunk_size:1 ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c'                                                                     , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'hash_replicate_left'                                    , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'hash_replicate_right'                                   , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_left_first'                                       , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_right_first'                                      , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_left_first',     hash_join_threshold:0          , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_right_first',    hash_join_threshold:0          , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'hash_replicate_left', keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'hash_replicate_right',keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_left_first',    keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_right_first',   keep_dimensions:1      , chunk_size:1                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_left_first',    hash_join_threshold:0, keep_dimensions:1, chunk_size:1 ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_right_first',   hash_join_threshold:0, keep_dimensions:1, chunk_size:1 ))" >> $OUTFILE 2>&1
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 16" >> $OUTFILE 2>&1
@@ -342,19 +342,19 @@ iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, algorithm:'mer
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 23" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c                                                                     , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'hash_replicate_left'                                    , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'hash_replicate_right'                                   , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_left_first'                                       , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_right_first'                                      , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_left_first',     hash_join_threshold:0          , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a=c, algorithm:'merge_right_first',    hash_join_threshold:0          , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'hash_replicate_left', keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'hash_replicate_right',keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_left_first',    keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_right_first',   keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_left_first',    hash_join_threshold:0, keep_dimensions:1, chunk_size:2 ))" >> $OUTFILE 2>&1
-iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:a<>c and j>3, algorithm:'merge_right_first',   hash_join_threshold:0, keep_dimensions:1, chunk_size:2 ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c'                                                                     , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'hash_replicate_left'                                    , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'hash_replicate_right'                                   , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_left_first'                                       , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_right_first'                                      , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_left_first',     hash_join_threshold:0          , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a=c', algorithm:'merge_right_first',    hash_join_threshold:0          , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'hash_replicate_left', keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'hash_replicate_right',keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_left_first',    keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_right_first',   keep_dimensions:1      , chunk_size:2                    ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_left_first',    hash_join_threshold:0, keep_dimensions:1, chunk_size:2 ))" >> $OUTFILE 2>&1
+iquery -aq "sort(equi_join(right, left, left_ids:1, right_ids:-1, filter:'a<>c and j>3', algorithm:'merge_right_first',   hash_join_threshold:0, keep_dimensions:1, chunk_size:2 ))" >> $OUTFILE 2>&1
 
 echo " " >> $OUTFILE 2>&1
 echo "Chapter 24" >> $OUTFILE 2>&1
