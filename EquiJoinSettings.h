@@ -34,7 +34,6 @@
 #include <query/AttributeComparator.h>
 #include <system/Config.h>
 #include <boost/algorithm/string.hpp>
-#include <boost/lexical_cast.hpp>
 
 namespace scidb
 {
@@ -51,8 +50,6 @@ using std::ostringstream;
 using std::stringstream;
 using boost::algorithm::trim;
 using boost::starts_with;
-using boost::lexical_cast;
-using boost::bad_lexical_cast;
 
 // Logger for operator. static to prevent visibility of variable outside of file
 static log4cxx::LoggerPtr logger(log4cxx::Logger::getLogger("scidb.operators.equi_join"));
@@ -157,6 +154,7 @@ private:
     size_t                        _bloomFilterSize;
     size_t                        _readAheadLimit;
     size_t                        _varSize;
+    string                        _filterExpressionString;
     shared_ptr<Expression>        _filterExpression;
     vector<string>                _leftNames;
     vector<string>                _rightNames;
@@ -231,6 +229,13 @@ private:
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "chunk size must be positive";
         }
         _chunkSize = res;
+    }
+
+    void setParamFilterExpression(vector <string> content)
+    {
+        string exp = content[0];
+        trim(exp);
+        _filterExpressionString = exp;
     }
 
     void setParamAlgorithm(vector <string> content)
@@ -517,6 +522,7 @@ public:
         _algorithmSet(false),
         _keepDimensions(false),
         _bloomFilterSize(33554467), //about 4MB, why not?
+        _filterExpressionString(""),
         _filterExpression(NULL),
         _leftOuter(false),
         _rightOuter(false),
@@ -550,6 +556,7 @@ public:
         setKeywordParamBool(kwParams, KW_LEFT_OUTER, _leftOuter);
         setKeywordParamBool(kwParams, KW_RIGHT_OUTER, _rightOuter);
         setKeywordParamJoinField(kwParams, KW_OUT_NAMES, outNamesSet, &Settings::setParamOutNames);
+        setKeywordParamString(kwParams, KW_FILTER, filterExpressionSet, &Settings::setParamFilterExpression);
 
         verifyInputs();
         mapAttributes();
@@ -772,14 +779,23 @@ private:
             inputDescs.push_back(inputDesc);
             ArrayDesc outputDesc =inputDesc;
 
-            if(kwParam->getParamType() == PARAM_LOGICAL_EXPRESSION) {
-                auto lExp = dynamic_cast<OperatorParamLogicalExpression*>(kwParam.get());
-                _filterExpression.reset(new Expression());
-                _filterExpression->compile(lExp->getExpression(), false, TID_BOOL, inputDescs, outputDesc);
-/*            } else if(kwParam->getParamType() == PARAM_PHYSICAL_EXPRESSION) {
-                auto lExp = dynamic_cast<OperatorParamPhysicalExpression*>(kwParam.get());
-                _filterExpression->compile(lExp->getExpression(), false, TID_BOOL, inputDescs, outputDesc);*/
-            }
+            shared_ptr<LogicalExpression> lExpr = parseExpression(_filterExpressionString);
+
+            _filterExpression.reset(new Expression());
+            _filterExpression->compile(lExpr, false, TID_BOOL, inputDescs, outputDesc);
+
+//            } else if(kwParam->getParamType() == PARAM_PHYSICAL_EXPRESSION) {
+//                string filter = ((std::shared_ptr<OperatorParamPhysicalExpression>&)kwParam)->getExpression()->evaluate().getString();
+//                LOG4CXX_DEBUG(logger, "EJ physical filter is: " << filter);
+//                shared_ptr<LogicalExpression> lExp = parseExpression("a=c");
+
+//                auto param = dynamic_pointer_cast<OperatorParamPhysicalExpression>(kwParam);
+//                auto lExp = dynamic_pointer_cast<LogicalExpression>(param->getExpression());
+//                _filterExpression=lExp;
+
+//                _filterExpression.reset(new Expression());
+//                _filterExpression->compile(lExp, false, TID_BOOL, inputDescs, outputDesc);
+//            }
         }
     }
 
