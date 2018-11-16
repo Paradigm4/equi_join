@@ -66,6 +66,15 @@ public:
         //        return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
     }
 
+    /// @see OperatorDist
+    DistType inferSynthesizedDistType(std::vector<DistType> const& /*inDist*/, size_t /*depth*/) const override
+    {
+        std::vector<RedistributeContext> emptyRC;
+        std::vector<ArrayDesc> emptyAD;
+        auto context = getOutputDistribution(emptyRC, emptyAD); // avoiding duplication of logic
+        return context.getArrayDistribution()->getPartitioningSchema();
+    }
+
     template<Handedness WHICH>
     size_t computeArrayOverhead(shared_ptr<Array> &input, shared_ptr<Query>& query, Settings const& settings)
     {
