@@ -56,14 +56,9 @@ public:
                std::vector<RedistributeContext> const& inputDistributions,
                std::vector< ArrayDesc> const& inputSchemas) const
     {
-        assertConsistency(inputSchemas[0], inputDistributions[0]);
-        assertConsistency(inputSchemas[1], inputDistributions[1]);
-
-        RedistributeContext distro = PhysicalOperator::getOutputDistribution(inputDistributions,
-                                                                             inputSchemas);
+        RedistributeContext distro = RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
         LOG4CXX_TRACE(logger, "equi_join() output distro: "<< distro);
         return distro;
-        //        return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
     }
 
     /// @see OperatorDist
