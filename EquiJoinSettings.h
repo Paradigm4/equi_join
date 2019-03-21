@@ -578,9 +578,11 @@ private:
     {
         LOG4CXX_DEBUG(logger, "Verifying inputs.");
         throwIf(_leftIds.size() && _leftNames.size(),     "both left_ids and left_names are set; use one or the other");
-        throwIf(_rightIds.size() && _rightNames.size(),   "both left_ids and left_names are set; use one or the other");
+        throwIf(_rightIds.size() && _rightNames.size(),   "both right_ids and right_names are set; use one or the other");
         LOG4CXX_DEBUG(logger, "Left id size: " << _leftIds.size());
         LOG4CXX_DEBUG(logger, "Left names size: " << _leftNames.size());
+        LOG4CXX_DEBUG(logger, "Right id size: " << _rightIds.size());
+        LOG4CXX_DEBUG(logger, "Right names size: " << _rightNames.size());
         throwIf(_leftIds.size() == 0 && _leftNames.size() == 0,   "no left join-on fields provided");
         throwIf(_rightIds.size() == 0 && _rightNames.size() == 0, "no right join-on fields provided");
         if(_leftNames.size())
@@ -589,14 +591,14 @@ private:
             {
                 string const& name = _leftNames[i];
                 bool found = false;
-                for(AttributeID j = 0; j<_numLeftAttrs; ++j)
+                for(const auto& attr : _leftSchema.getAttributes())
                 {
-                    AttributeDesc const& attr = _leftSchema.getAttributes()[j];
+                    LOG4CXX_DEBUG(logger, "Testing left size for: " << attr.getName());
                     if(attr.getName() == name)
                     {
                         if(!found)
                         {
-                            _leftIds.push_back(j);
+                            _leftIds.push_back(attr.getId());
                             found = true;
                         }
                         else
@@ -640,14 +642,13 @@ private:
             {
                 string const& name = _rightNames[i];
                 bool found = false;
-                for(AttributeID j = 0; j<_numRightAttrs; ++j)
+                for(const auto& attr : _rightSchema.getAttributes())
                 {
-                    AttributeDesc const& attr = _rightSchema.getAttributes()[j];
                     if(attr.getName() == name)
                     {
                         if(!found)
                         {
-                            _rightIds.push_back(j);
+                            _rightIds.push_back(attr.getId());
                             found = true;
                         }
                         else
@@ -692,8 +693,8 @@ private:
             LOG4CXX_DEBUG(logger, "EJ leftKey is " << leftKey);
             throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left id out of bounds");
             throwIf(rightKey >= _numRightAttrs + _numRightDims, "right id out of bounds");
-            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
-            TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true)[rightKey].getType() : TID_INT64;
+            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true).findattr(leftKey).getType()   : TID_INT64;
+            TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true).findattr(rightKey).getType() : TID_INT64;
             throwIf(leftType != rightType, "key types do not match");
         }
         throwIf( _algorithmSet && _algorithm == HASH_REPLICATE_LEFT  && isLeftOuter(),  "left replicate algorithm cannot be used for left  outer join");
@@ -713,9 +714,9 @@ private:
             throwIf(_rightMapToTuple[rightKey] != -1, "right keys not unique");
             _leftMapToTuple[leftKey]   = i;
             _rightMapToTuple[rightKey] = i;
-            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
-            bool leftNullable  = leftKey  < _numLeftAttrs  ?  _leftSchema.getAttributes(true)[leftKey].isNullable()   : false;
-            bool rightNullable = rightKey < _numRightAttrs  ? _rightSchema.getAttributes(true)[rightKey].isNullable() : false;
+            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true).findattr(leftKey).getType()   : TID_INT64;
+            bool leftNullable  = leftKey  < _numLeftAttrs  ?  _leftSchema.getAttributes(true).findattr(leftKey).isNullable()   : false;
+            bool rightNullable = rightKey < _numRightAttrs  ? _rightSchema.getAttributes(true).findattr(rightKey).isNullable() : false;
             _keyComparators.push_back(AttributeComparator(leftType));
             _keyNullable.push_back( leftNullable || rightNullable );
         }
@@ -978,9 +979,9 @@ public:
         ArrayDesc const& rightSchema = getRightSchema();
         size_t const numRightAttrs = getNumRightAttrs();
         size_t const numRightDims  = getNumRightDims();
-        for(AttributeID i =0; i<numLeftAttrs; ++i)
+        size_t i = 0;
+        for(const auto& input : _leftSchema.getAttributes(true))
         {
-            AttributeDesc const& input = leftSchema.getAttributes(true)[i];
             AttributeID destinationId = mapLeftToOutput(i);
             uint16_t flags = input.getFlags();
             if( isRightOuter() || (isLeftKey(i) && isKeyNullable(destinationId)))
@@ -988,7 +989,8 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            tmpOutput[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            tmpOutput[destinationId] = AttributeDesc(name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            i++;
         }
         for(size_t i =0; i<numLeftDims; ++i)
         {
@@ -1004,15 +1006,17 @@ public:
                 flags = AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            tmpOutput[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, CompressorType::NONE);
+            tmpOutput[destinationId] = AttributeDesc(name, TID_INT64, flags, CompressorType::NONE);
         }
-        for(AttributeID i =0; i<numRightAttrs; ++i)
+
+        i = 0;
+        for(const auto& input : _rightSchema.getAttributes(true))
         {
             if(isRightKey(i)) //already in the schema
             {
+                i++;
                 continue;
             }
-            AttributeDesc const& input = rightSchema.getAttributes(true)[i];
             AttributeID destinationId = mapRightToOutput(i);
             uint16_t flags = input.getFlags();
             if(isLeftOuter())
@@ -1020,7 +1024,8 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            tmpOutput[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            tmpOutput[destinationId] = AttributeDesc(name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            i++;
         }
         for(size_t i =0; i<numRightDims; ++i)
         {
@@ -1031,7 +1036,7 @@ public:
             }
             DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            tmpOutput[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
+            tmpOutput[destinationId] = AttributeDesc(name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
         }
         for (size_t i = 0; i < getNumOutputAttrs(); ++i) {
             const AttributeDesc pushable(tmpOutput[i]);
@@ -1042,7 +1047,7 @@ public:
         Dimensions outputDimensions;
         outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
         outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc("equi_join", outputAttributes, outputDimensions, createDistribution(defaultPartitioning()), query->getDefaultArrayResidency());
+        return ArrayDesc("equi_join", outputAttributes, outputDimensions, createDistribution(dtUndefined), query->getDefaultArrayResidency());
     }
 
 };

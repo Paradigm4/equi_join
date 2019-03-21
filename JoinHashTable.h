@@ -176,7 +176,7 @@ public:
         size_t overhead = sizeof(HashTableEntry);  //one per tuple
         for(size_t i =0; i<tupleAttributes.size(); ++i)
         {
-            AttributeDesc const& att = tupleAttributes[i];
+            AttributeDesc const& att = tupleAttributes.findattr(i);
             size_t const size = att.getSize() == 0 ? Config::getInstance()->getOption<int>(CONFIG_STRING_SIZE_ESTIMATION) : att.getSize();
             overhead += (sizeof(Value) + (size <= sizeof(void*) ? 0 : size));
         }
