@@ -47,14 +47,16 @@ public:
          PhysicalOperator(logicalName, physicalName, parameters, schema)
     {}
 
-    virtual bool changesDistribution(std::vector<ArrayDesc> const&) const
+    void checkInputDistAgreement(std::vector<DistType> const& inDist, size_t /*depth*/) const override
     {
-        return true;
+        SCIDB_ASSERT(inDist.size() == 2);
+        // input[0] can have arbitrary distribution
+        // input[1] can be arbitraary
+        // NOTE: if the answer is more restrictive than this, then please add SCIDB_ASSERT() about what inDist[0] and inDist[1] can be;
     }
 
-
     virtual RedistributeContext getOutputDistribution(std::vector<RedistributeContext> const& inputDistributions,
-                                                      std::vector<ArrayDesc> const& inputSchemas) const
+                                                      std::vector<ArrayDesc> const& inputSchemas) const override
     {
         RedistributeContext distro = RedistributeContext(createDistribution(dtUndefined), _schema.getResidency() );
 
@@ -643,7 +645,7 @@ public:
         }
     }
 
-    shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
+    shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query) override
     {
         vector<ArrayDesc const*> inputSchemas(2);
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
