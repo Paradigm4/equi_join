@@ -22,7 +22,7 @@ $ iquery -aq "store(apply(build(<c:string>[j=1:5,3,0], '[(def),(mno),(null),(def
 
 Join the arrays on the string attribute, i.e. left.a=right.c:
 ```
-$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c')"
+$ iquery -aq "equi_join(left, right, left_names:a, right_names:c)"
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,1
 {0,1} 'mno',4.4,2
@@ -32,23 +32,23 @@ Note "left.a" and "right.c" are combined into a single attribute "a" (name inher
 
 Perform left, right or full outer joins. Note the order of returned results may vary:
 ```
-$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'left_outer=true')"
+$ iquery -aq "equi_join(left, right, left_names:'a', right_names:'c', left_outer:true)"
 {instance_id,value_no} a,b,d
-{0,0} null,0,null        
+{0,0} null,0,null
 {0,1} 'def',1.1,1
 {0,2} 'def',1.1,4
-{1,0} 'ghi',2.2,null     
-{1,1} 'jkl',3.3,null     
+{1,0} 'ghi',2.2,null
+{1,1} 'jkl',3.3,null
 {2,0} 'mno',4.4,2
 
-$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'right_outer=true')"
+$ iquery -aq "equi_join(left, right, left_names:'a', right_names:'c', right_outer:true)"
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,1
 {0,1} 'mno',4.4,2
 {0,2} null,null,3
 {1,0} 'def',1.1,4
 
-$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'left_outer=true', 'right_outer=true')"
+$ iquery -aq "equi_join(left, right, left_names:'a', right_names:'c', left_outer:true, right_outer:true)"
 {instance_id,value_no} a,b,d
 {1,0} 'mno',4.4,2
 {2,0} null,0,null
@@ -59,9 +59,9 @@ $ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'left_oute
 {3,1} 'jkl',3.3,null
 ```
 
-Join on two keys: left.i = right.d (dimension to attribute) and left.a=right.c. Note we can use zero-based dimension and attribute identifiers instead of names:
+Join on two keys: left.i = right.d (dimension to attribute) and left.a=right.c. Note we can use -1-based dimension and 0-based attribute identifiers instead of names:
 ```
-$ iquery -aq "equi_join(left, right, 'left_ids=~0,0', 'right_ids=1,0')"
+$ iquery -aq "equi_join(left, right, left_ids:-1,0, right_ids:1,0)"
 {instance_id,value_no} i,a,b
 {0,0} 1,'def',1.1
 ```
@@ -86,13 +86,15 @@ sys	0m0.004s
 
 With equi-join, note the redimension is no longer necessary and the performance is similar:
 ```
-$ time iquery -naq "consume(equi_join(twod, build(<x:int64>[i=0:0,1,0], 128), 'left_names=x', 'right_names=x'))"
+$ time iquery -naq "consume(equi_join(twod as A, build(<x:int64>[i=0:0,1,0], 128) as B, left_names:A.x, right_names:B.x))"
 Query was executed successfully
 
 real	0m0.315s
 user	0m0.008s
 sys	0m0.000s
 ```
+
+Note that the duplicate name of the attribute `x` in the left side and right side arrays must be disambiguated by the aliases, A and B.
 
 Here, `equi_join` detects that the join is on dimensions and uses a chunk filter structure to prevent irrelevant chunks from being scanned. The above is a lucky case for `cross_join` - as the number of attributes increases, the advantage of `equi_join` gets bigger. If the join is on attributes, `cross_join` definitely cannot keep up. Moreover `cross_join` always replicates the right array, no matter how large, to every instance; this is often disastrous. `equi_join` will adapt well regardless of the order of arguments, in most cases.
 
@@ -109,52 +111,52 @@ $ iquery -aq "cross_join(left, right)"
 {0,1} null,0,'def',1
 {0,2} null,0,'mno',2
 {0,3} null,0,'pqr',3
-{1,1} 'def',1.1,'def',1
+{1,1} 'def',1.1,'def,1
 ```
-In cases like this, the inputs are usually small (because the output squares them). Here, preserving dimensionality is often useful and the approach of replicating one of the arrays is about the best one can do. 
+In cases like this, the inputs are usually small (because the output squares them). Here, preserving dimensionality is often useful and the approach of replicating one of the arrays is about the best one can do.
 
 ## Usage
 ```
-equi_join(left_array, right_array, [, 'setting=value` [,...]])
+equi_join(left_array, right_array, [, setting:value` [,...]])
 ```
 Where left and right array could be any SciDB arrays or operator outputs.
 
 ### Specifying join-on fields (keys)
-* `left_names=a,b,c`: comma-separated dimension or attribute names from the left array
-* `left_ids=a,~b,c`: 0-based dimension or attribute numbers from the left array; dimensions prefaced with `~`
-* `right_names=d,e,f`: comma-seaparated dimension or attribute names from the right array
-* `right_ids=d,e,f`: 0-based dimension or attribute numbers from the right array; dimensions prefaced with `~`
+* `left_names:(a,b,c`: comma-separated dimension or attribute names from the left array
+* `left_ids:(a,-b,c): -1-based dimension or attribute numbers from the left array
+* `right_names:(d,e,f)`: comma-seaparated dimension or attribute names from the right array
+* `right_ids:d,e,f`: -1-based dimension or attribute numbers from the right array
 
 You can use either `names` or `ids` for either array. There must be an equal number of left and right keys and they must match data types; dimensions are int64. TBD: auto-detect fields with the same name if not specified.
 
 ### Outer joins
-* `left_outer=0/1`: if set to `1` or `true` perform a left outer join: include all cells from the left array and populate with nulls where there are no corresponding cells in the right array
-* `right_outer=0/1`: if set to `1` or `true` perform a right outer join: include all cells from the right array and populate with nulls where there are no corresponding cells in the left array
+* `left_outer:false/true`: if set to `true` or `1` perform a left outer join: include all cells from the left array and populate with nulls where there are no corresponding cells in the right array
+* `right_outer:false/true`: if set to `true` or `1` perform a right outer join: include all cells from the right array and populate with nulls where there are no corresponding cells in the left array
 
-By default, both of these are set to false. Setting both `left_outer=true` and `right_outer=true` will result in a full outer join.
+By default, both of these are set to false. Setting both `left_outer:true` and `right_outer:true` will result in a full outer join.
 
 ### Output names
 If desired, user can set a list of output names to disambiguate:
-* `out_names=a,b,c,...`
+* `out_names:(a,b,c,...)`
 The number of provided tokens must match the number of attributes in the output (num left attrs + num right attrs - num join keys). By default, the names are copied from the input arrays, left array taking precedence for join keys.
 
 ### Additional filter on the output:
-* `filter:expression` can be used to apply an additional filter to the result. 
+* `filter:expression` can be used to apply an additional filter to the result.
 
 Use any valid boolean expression over the output attributes. For example:
 ```
-$ iquery -aq "equi_join(left, right, 'left_names=a', 'right_names=c', 'filter:b<d')"  
+$ iquery -aq "equi_join(left, right, left_names:a, right_names:c, filter:'b<d')"
 {instance_id,value_no} a,b,d
 {0,0} 'def',1.1,4
 ```
-Note, `equi_join(..., 'filter:expression')` is equivalent to `filter(equi_join(...), expression)` except the operator is materializing and the former will apply filtering prior to materialization. This is an efficiency improvement in cases where the join on keys increases the size of the data before filtering. If `out_names=` is set, then the expression will refer to the names provided in `out_names`. 
+Note, `equi_join(..., 'filter:expression')` is equivalent to `filter(equi_join(...), expression)` except the operator is materializing and the former will apply filtering prior to materialization. This is an efficiency improvement in cases where the join on keys increases the size of the data before filtering. If `out_names:` is set, then the expression will refer to the names provided in `out_names`.
 
 ### Other settings:
-* `chunk_size=S`: for the output
-* `keep_dimensions=0/1`: 1 if the output should contain all the input dimensions, converted to attributes. 0 is default, meaning dimensions are only retained if they are join keys.
-* `hash_join_threshold=MB`: a threshold on the array size used to choose the algorithm; see next section for details; defaults to the `merge-sort-buffer` config
-* `bloom_filter_size=bits`: the size of the bloom filters to use, in units of bits; TBD: clean this up
-* `algorithm=name`: a hard override on how to perform the join, currently supported values are below; see next section for details
+* `chunk_size:S`: for the output
+* `keep_dimensions:false/true`: `true` if the output should contain all the input dimensions, converted to attributes. 0 is default, meaning dimensions are only retained if they are join keys.
+* `hash_join_threshold:MB`: a threshold on the array size used to choose the algorithm; see next section for details; defaults to the `merge-sort-buffer` config
+* `bloom_filter_size:bits`: the size of the bloom filters to use, in units of bits; TBD: clean this up
+* `algorithm:name`: a hard override on how to perform the join, currently supported values are below; see next section for details
   * `hash_replicate_left`: copy the entire left array to every instance and perform a hash join
   * `hash_replicate_right`: copy the entire right array to every instance and perform a hash join
   * `merge_left_first`: redistribute the left array by hash first, then perform either merge or hash join
