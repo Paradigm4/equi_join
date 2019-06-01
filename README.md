@@ -1,4 +1,7 @@
 # equi_join
+
+[![SciDB 19.3](https://img.shields.io/badge/SciDB-19.3-blue.svg)](https://forum.paradigm4.com/t/scidb-release-19-3/2359)
+
 Relational-style Equi-Join of SciDB Arrays by Attributes or Dimensions. The objective of the operator is to make joining of various diverse datasets easier and more performant. In the future, SciDB will have a more sophisticated query optimizer to determine join strategies. For now, the choice of strategy is done locally in the operator, using some array pre-scanning if needed.
 
 ## Examples
