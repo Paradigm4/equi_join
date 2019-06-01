@@ -23,8 +23,10 @@
 * END_COPYRIGHT
 */
 
-#include <query/Operator.h>
+#define LEGACY_API
+#include <query/PhysicalOperator.h>
 #include <array/SortArray.h>
+#include <array/ArrayDesc.h>
 
 #include "ArrayIO.h"
 #include "JoinHashTable.h"
@@ -45,16 +47,30 @@ public:
          PhysicalOperator(logicalName, physicalName, parameters, schema)
     {}
 
-    virtual bool changesDistribution(std::vector<ArrayDesc> const&) const
+    void checkInputDistAgreement(std::vector<DistType> const& inDist, size_t /*depth*/) const override
     {
-        return true;
+        SCIDB_ASSERT(inDist.size() == 2);
+        // input[0] can have arbitrary distribution
+        // input[1] can be arbitraary
+        // NOTE: if the answer is more restrictive than this, then please add SCIDB_ASSERT() about what inDist[0] and inDist[1] can be;
     }
 
-    virtual RedistributeContext getOutputDistribution(
-               std::vector<RedistributeContext> const& inputDistributions,
-               std::vector< ArrayDesc> const& inputSchemas) const
+    virtual RedistributeContext getOutputDistribution(std::vector<RedistributeContext> const& inputDistributions,
+                                                      std::vector<ArrayDesc> const& inputSchemas) const override
     {
-        return RedistributeContext(createDistribution(psUndefined), _schema.getResidency() );
+        RedistributeContext distro = RedistributeContext(createDistribution(dtUndefined), _schema.getResidency() );
+
+        LOG4CXX_TRACE(logger, "equi_join() output distro: "<< distro);
+        return distro;
+    }
+
+    /// @see OperatorDist
+    DistType inferSynthesizedDistType(std::vector<DistType> const& /*inDist*/, size_t /*depth*/) const override
+    {
+        std::vector<RedistributeContext> emptyRC;
+        std::vector<ArrayDesc> emptyAD;
+        auto context = getOutputDistribution(emptyRC, emptyAD); // avoiding duplication of logic
+        return context.getArrayDistribution()->getDistType();
     }
 
     template<Handedness WHICH>
@@ -62,7 +78,8 @@ public:
     {
         size_t tupleOverhead = JoinHashTable::computeTupleOverhead(makeTupledSchema<WHICH> (settings, query).getAttributes(true));
         size_t totalCount = 0;
-        shared_ptr<ConstArrayIterator> aiter(input->getConstIterator(input->getArrayDesc().getAttributes().size()-1));
+        const auto &ebmAttr = input->getArrayDesc().getEmptyBitmapAttribute();
+        shared_ptr<ConstArrayIterator> aiter(input->getConstIterator(*ebmAttr));
         while(!aiter->end())
         {
             totalCount += aiter->getChunk().count();
@@ -157,8 +174,10 @@ public:
         ArrayDesc const& rightDesc = inputArrays[1]->getArrayDesc();
         size_t leftCellSize  = JoinHashTable::computeTupleOverhead(makeTupledSchema<LEFT> (settings, query).getAttributes(true));
         size_t rightCellSize = JoinHashTable::computeTupleOverhead(makeTupledSchema<LEFT> (settings, query).getAttributes(true));
-        shared_ptr<ConstArrayIterator> laiter = inputArrays[0]->getConstIterator(leftDesc.getAttributes().size()-1);
-        shared_ptr<ConstArrayIterator> raiter = inputArrays[1]->getConstIterator(rightDesc.getAttributes().size()-1);
+        const auto &leftEbmAttr = leftDesc.getEmptyBitmapAttribute();
+        shared_ptr<ConstArrayIterator> laiter = inputArrays[0]->getConstIterator(*leftEbmAttr);
+        const auto &rightEbmAttr = rightDesc.getEmptyBitmapAttribute();
+        shared_ptr<ConstArrayIterator> raiter = inputArrays[1]->getConstIterator(*rightEbmAttr);
         size_t leftSize =0, rightSize =0;
         size_t const threshold = settings.getHashJoinThreshold();
         while(leftSize < threshold && rightSize < threshold && !laiter->end() && !raiter->end())
@@ -370,7 +389,7 @@ public:
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "Internal inconsistency";
         }
         shared_ptr<Array> redistributed = (WHICH_REPLICATED == LEFT ? inputArrays[0] : inputArrays[1]);
-        redistributed = redistributeToRandomAccess(redistributed, createDistribution(psReplication), ArrayResPtr(), query, getShared());
+        redistributed = redistributeToRandomAccess(redistributed, createDistribution(dtReplication), ArrayResPtr(), query, shared_from_this());
         ArenaPtr operatorArena = this->getArena();
         ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, WHICH_REPLICATED == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
@@ -421,15 +440,16 @@ public:
     {
         SortingAttributeInfos sortingAttributeInfos(settings.getNumKeys() + 1); //plus hash
         sortingAttributeInfos[0].columnNo = inputArray->getArrayDesc().getAttributes(true).size()-1;
+        //        sortingAttributeInfos[0].columnNo = inputArray->getArrayDesc().getEmptyBitmapAttribute()->getId();
         sortingAttributeInfos[0].ascent = true;
         for(size_t k=0; k<settings.getNumKeys(); ++k)
         {
             sortingAttributeInfos[k+1].columnNo = k;
             sortingAttributeInfos[k+1].ascent = true;
         }
-        SortArray sorter(inputArray->getArrayDesc(), _arena, false, settings.getChunkSize());
+        SortArray sorter(inputArray->getArrayDesc(), _arena);
         shared_ptr<TupleComparator> tcomp(make_shared<TupleComparator>(sortingAttributeInfos, inputArray->getArrayDesc()));
-        return sorter.getSortedArray(inputArray, query, getShared(), tcomp);
+        return sorter.getSortedArray(inputArray, query, shared_from_this(), tcomp);
     }
 
     template <Handedness WHICH>
@@ -578,7 +598,7 @@ public:
         first = readIntoPreSort<WHICH_FIRST, KEEP_FIRST_NULL_TUPLES, HASH_NULLS>(first, query, settings, chunkFilter.get(), NULL, bloomFilter.get(), NULL);
         first = sortArray(first, query, settings);
         first = sortedToPreSg<WHICH_FIRST>(first, query, settings);
-        first = redistributeToRandomAccess(first,createDistribution(psByRow),query->getDefaultArrayResidency(), query, getShared());
+        first = redistributeToRandomAccess(first,createDistribution(dtByRow),query->getDefaultArrayResidency(), query, shared_from_this());
         if(chunkFilter.get())
         {
             chunkFilter->globalExchange(query);
@@ -590,7 +610,8 @@ public:
         second = readIntoPreSort<WHICH_SECOND, KEEP_SECOND_NULL_TUPLES, HASH_NULLS>(second, query, settings, NULL, chunkFilter.get(), NULL, bloomFilter.get());
         second = sortArray(second, query, settings);
         second = sortedToPreSg<WHICH_SECOND>(second, query, settings);
-        second = redistributeToRandomAccess(second,createDistribution(psByRow),query->getDefaultArrayResidency(), query, getShared());
+        second = redistributeToRandomAccess(second,createDistribution(dtByRow),query->getDefaultArrayResidency(), query, shared_from_this());
+
         size_t const firstOverhead  = computeArrayOverhead<WHICH_FIRST>(first, query, settings);
         size_t const secondOverhead = computeArrayOverhead<WHICH_SECOND>(second, query, settings);
         LOG4CXX_DEBUG(logger, "EJ merge after SG first overhead "<<firstOverhead<<" second overhead "<<secondOverhead);
@@ -624,12 +645,13 @@ public:
         }
     }
 
-    shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query)
+    shared_ptr< Array> execute(vector< shared_ptr< Array> >& inputArrays, shared_ptr<Query> query) override
     {
         vector<ArrayDesc const*> inputSchemas(2);
         inputSchemas[0] = &inputArrays[0]->getArrayDesc();
         inputSchemas[1] = &inputArrays[1]->getArrayDesc();
-        Settings settings(inputSchemas, _parameters, false, query);
+        LOG4CXX_DEBUG(logger, "execute - Checking attributes.");
+        Settings settings(inputSchemas, _parameters, _kwParameters, query);
         Settings::algorithm algo = pickAlgorithm(inputArrays, query, settings);
         if(algo == Settings::HASH_REPLICATE_LEFT)
         {

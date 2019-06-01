@@ -26,17 +26,19 @@
 #ifndef EQUI_JOIN_SETTINGS
 #define EQUI_JOIN_SETTINGS
 
-#include <query/Operator.h>
+#define LEGACY_API
+#include <query/LogicalOperator.h>
+#include <query/OperatorParam.h>
 #include <query/Expression.h>
+#include <query/Query.h>
 #include <query/AttributeComparator.h>
+#include <system/Config.h>
 #include <boost/algorithm/string.hpp>
-#include <boost/lexical_cast.hpp>
 
 namespace scidb
 {
 
 std::shared_ptr<LogicalExpression>    parseExpression(const std::string&);
-
 namespace equi_join
 {
 
@@ -48,11 +50,25 @@ using std::ostringstream;
 using std::stringstream;
 using boost::algorithm::trim;
 using boost::starts_with;
-using boost::lexical_cast;
-using boost::bad_lexical_cast;
 
 // Logger for operator. static to prevent visibility of variable outside of file
 static log4cxx::LoggerPtr logger(log4cxx::Logger::getLogger("scidb.operators.equi_join"));
+
+static const char* const KW_LEFT_IDS = "left_ids";
+static const char* const KW_RIGHT_IDS = "right_ids";
+static const char* const KW_LEFT_NAMES = "left_names";
+static const char* const KW_RIGHT_NAMES = "right_names";
+static const char* const KW_HASH_JOIN_THRES = "hash_join_threshold";
+static const char* const KW_CHUNK_SIZE = "chunk_size";
+static const char* const KW_ALGORITHM = "algorithm";
+static const char* const KW_KEEP_DIMS = "keep_dimensions";
+static const char* const KW_BLOOM_FILT_SZ = "bloom_filter_size";
+static const char* const KW_FILTER = "filter";
+static const char* const KW_LEFT_OUTER = "left_outer";
+static const char* const KW_RIGHT_OUTER = "right_outer";
+static const char* const KW_OUT_NAMES = "out_names";
+
+typedef std::shared_ptr<OperatorParamLogicalExpression> ParamType_t ;
 
 /**
  * Table sizing considerations:
@@ -146,121 +162,85 @@ private:
     bool                          _rightOuter;
     vector<string>                _outNames;
 
-    static string paramToString(shared_ptr <OperatorParam> const& parameter, shared_ptr<Query>& query, bool logical)
+    void setParamIds(vector<int64_t> content, vector<size_t> &keys, size_t shift)
+    /*
+     * Attributes are zero based and count up.  Dimensions are -1 based and count down.
+     */
     {
-        if(logical)
-        {
-            return evaluate(((std::shared_ptr<OperatorParamLogicalExpression>&)parameter)->getExpression(), TID_STRING).getString();
-        }
-        return ((shared_ptr<OperatorParamPhysicalExpression>&) parameter)->getExpression()->evaluate().getString();
-    }
-
-    void setParamIds(string trimmedContent, vector<size_t> &keys, size_t shift)
-    {
-        stringstream ss(trimmedContent);
-        string tok;
-        while(getline(ss, tok, ','))
-        {
-            try
-            {
-                uint64_t id;
-                if(tok[0] == '~')
-                {
-                    id = lexical_cast<uint64_t>(tok.substr(1)) + shift;
-                }
-                else
-                {
-                    id = lexical_cast<uint64_t>(tok);
-                }
-                keys.push_back(id);
-            }
-            catch (bad_lexical_cast const& exn)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse keys";
-            }
+        for (size_t i = 0; i < content.size(); ++i) {
+            size_t val;
+            if (content[i] < 0)  // It's a dimension
+                val = shift + abs(content[i] + 1);
+            else
+                val = content[i]; // It's an attribute
+            keys.push_back(val);
         }
     }
 
-    void setParamLeftIds(string trimmedContent)
+    void setParamLeftIds(vector<int64_t> content)
     {
-        setParamIds(trimmedContent, _leftIds, _numLeftAttrs);
+        setParamIds(content, _leftIds, _numLeftAttrs);
     }
 
-    void setParamRightIds(string trimmedContent)
+    void setParamRightIds(vector<int64_t> content)
     {
-        setParamIds(trimmedContent, _rightIds, _numRightAttrs);
+        setParamIds(content, _rightIds, _numRightAttrs);
     }
 
-    void setParamNames(string trimmedContent, vector<string> &names)
+    void setParamNames(vector<string> content, vector<string> &names)
     {
-        stringstream ss(trimmedContent);
-        string tok;
-        while(getline(ss, tok, ','))
-        {
-            try
-            {
-                trim(tok);
-                names.push_back(tok);
-            }
-            catch (bad_lexical_cast const& exn)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse keys";
-            }
+        for (size_t i = 0; i < content.size(); ++i) {
+            names.push_back(content[i]);
+            LOG4CXX_DEBUG(logger, "EJ out name " << i << " is " << content[i]);
         }
     }
 
-    void setParamLeftNames(string trimmedContent)
+    void setParamLeftNames(vector<string> content)
     {
-        setParamNames(trimmedContent, _leftNames);
+        setParamNames(content, _leftNames);
     }
 
-    void setParamRightNames(string trimmedContent)
+    void setParamRightNames(vector <string> content)
     {
-        setParamNames(trimmedContent, _rightNames);
+        setParamNames(content, _rightNames);
     }
 
-    void setParamOutNames(string trimmedContent)
+    void setParamOutNames(vector<string> content)
     {
-        setParamNames(trimmedContent, _outNames);
+        setParamNames(content, _outNames);
     }
 
-    void setParamHashJoinThreshold(string trimmedContent)
+    void setParamHashJoinThreshold(vector<int64_t> keys)
     {
-        try
+        int64_t res = keys[0];
+        if(res < 0)
         {
-            int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res < 0)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "hash join threshold must be non negative";
-            }
-            _hashJoinThreshold = res * 1024 * 1204;
-            _numHashBuckets = chooseNumBuckets(_hashJoinThreshold / (1024*1024));
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "hash join threshold must be non negative";
         }
-        catch (bad_lexical_cast const& exn)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse hash join threshold";
-        }
+        _hashJoinThreshold = res * 1024 * 1204;
+        _numHashBuckets = chooseNumBuckets(_hashJoinThreshold / (1024*1024));
     }
 
-    void setParamChunkSize(string trimmedContent)
+    void setParamChunkSize(vector<int64_t> keys)
     {
-        try
+        int64_t res = keys[0];
+        if(res <= 0)
         {
-            int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res <= 0)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "chunk size must be positive";
-            }
-            _chunkSize = res;
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "chunk size must be positive";
         }
-        catch (bad_lexical_cast const& exn)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse chunk size";
-        }
+        _chunkSize = res;
     }
 
-    void setParamAlgorithm(string trimmedContent)
+    void setParamFilterExpression(vector <string> content)
     {
+        string exp = content[0];
+        trim(exp);
+        _filterExpressionString = exp;
+    }
+
+    void setParamAlgorithm(vector <string> content)
+    {
+        string trimmedContent = content[0];
         if(trimmedContent == "hash_replicate_left")
         {
             _algorithm = HASH_REPLICATE_LEFT;
@@ -306,26 +286,14 @@ private:
         }
     }
 
-    void setParamBloomFilterSize(string trimmedContent)
+    void setParamBloomFilterSize(vector<int64_t> content)
     {
-        try
+        int64_t res = content[0];
+        if(res <= 0)
         {
-            int64_t res = lexical_cast<int64_t>(trimmedContent);
-            if(res <= 0)
-            {
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "bloom filter size size must be positive";
-            }
-            _bloomFilterSize = res;
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "bloom filter size size must be positive";
         }
-        catch (bad_lexical_cast const& exn)
-        {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "could not parse bloom filter size";
-        }
-    }
-
-    void setParamFilterExpression(string trimmedContent)
-    {
-        _filterExpressionString = trimmedContent;
+        _bloomFilterSize = res;
     }
 
     void setParamLeftOuter(string trimmedContent)
@@ -355,8 +323,182 @@ private:
             throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
         }
         trim(paramContent);
-        (this->*innersetter)(paramContent); //TODO:.. tried for an hour with a template first. #thisIsWhyWeCantHaveNiceThings
+        (this->*innersetter)(paramContent);
         alreadySet = true;
+    }
+
+    void checkIfSet(bool alreadySet, const char* kw)
+    {
+        if (alreadySet)
+        {
+            ostringstream error;
+            error<<"illegal attempt to set "<<kw<<" multiple times";
+            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
+        }
+    }
+
+    string getParamContentString(Parameter& param)
+    {
+        string paramContent;
+
+        if(param->getParamType() == PARAM_LOGICAL_EXPRESSION) {
+            ParamType_t& paramExpr = reinterpret_cast<ParamType_t&>(param);
+            paramContent = evaluate(paramExpr->getExpression(), TID_STRING).getString();
+        } else {
+            OperatorParamPhysicalExpression* exp =
+                dynamic_cast<OperatorParamPhysicalExpression*>(param.get());
+            SCIDB_ASSERT(exp != nullptr);
+            paramContent = exp->getExpression()->evaluate().getString();
+        }
+        return paramContent;
+    }
+
+    void setKeywordParamString(KeywordParameters const& kwParams, const char* const kw, bool& alreadySet, void (Settings::* innersetter)(vector<string>) )
+    {
+        checkIfSet(alreadySet, kw);
+        vector <string> paramContent;
+
+        Parameter kwParam = getKeywordParam(kwParams, kw);
+        if (kwParam) {
+            if (kwParam->getParamType() == PARAM_NESTED) {
+                auto group = dynamic_cast<OperatorParamNested*>(kwParam.get());
+                Parameters& gParams = group->getParameters();
+                for (size_t i = 0; i < gParams.size(); ++i) {
+                    paramContent.push_back(getParamContentString(gParams[i]));
+                }
+            } else {
+                paramContent.push_back(getParamContentString(kwParam));
+            }
+            (this->*innersetter)(paramContent);
+            alreadySet = true;
+        } else {
+            LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
+        }
+    }
+
+    string getParamContentJoinField(Parameter& param)
+    {
+        string paramContent;
+
+        if(param->getParamType() == PARAM_DIMENSION_REF) {
+            const OperatorParamDimensionReference* dimRef =
+                safe_dynamic_cast<OperatorParamDimensionReference*>(param.get());
+            paramContent = dimRef->getObjectName();
+        }
+
+        if(param->getParamType() == PARAM_ATTRIBUTE_REF) {
+            const OperatorParamAttributeReference* attRef =
+                safe_dynamic_cast<OperatorParamAttributeReference*>(param.get());
+            paramContent = attRef->getObjectName();
+        }
+
+        return paramContent;
+    }
+
+    void setKeywordParamJoinField(KeywordParameters const& kwParams,
+                                  const char* const kw,
+                                  bool& alreadySet,
+                                  void (Settings::* innersetter)(vector<string>) )
+    /**
+     * This function works for both Dimension names and Attribute names.
+     */
+    {
+        checkIfSet(alreadySet, kw);
+        vector<string> paramContent;
+        Parameter kwParam = getKeywordParam(kwParams, kw);
+        if (kwParam) {
+            if (kwParam->getParamType() == PARAM_NESTED) {
+                auto group = dynamic_cast<OperatorParamNested*>(kwParam.get());
+                Parameters& gParams = group->getParameters();
+                for (size_t i = 0; i < gParams.size(); ++i) {
+                    paramContent.push_back(getParamContentJoinField(gParams[i]));
+                }
+            } else {
+                paramContent.push_back(getParamContentJoinField(kwParam));
+            }
+            (this->*innersetter)(paramContent);
+            alreadySet = true;
+        } else {
+            LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
+        }
+    }
+
+    int64_t getParamContentInt64(Parameter& param)
+    {
+        size_t paramContent;
+
+        if(param->getParamType() == PARAM_LOGICAL_EXPRESSION) {
+            ParamType_t& paramExpr = reinterpret_cast<ParamType_t&>(param);
+            paramContent = evaluate(paramExpr->getExpression(), TID_INT64).getInt64();
+        } else {
+            OperatorParamPhysicalExpression* exp =
+                dynamic_cast<OperatorParamPhysicalExpression*>(param.get());
+            SCIDB_ASSERT(exp != nullptr);
+            paramContent = exp->getExpression()->evaluate().getInt64();
+            LOG4CXX_DEBUG(logger, "EJ integer param is " << paramContent)
+
+        }
+        return paramContent;
+    }
+
+    void setKeywordParamInt64(KeywordParameters const& kwParams, const char* const kw, bool& alreadySet, void (Settings::* innersetter)(vector<int64_t>) )
+    {
+        checkIfSet(alreadySet, kw);
+
+        vector<int64_t> paramContent;
+        size_t numParams;
+
+        Parameter kwParam = getKeywordParam(kwParams, kw);
+        if (kwParam) {
+            if (kwParam->getParamType() == PARAM_NESTED) {
+                auto group = dynamic_cast<OperatorParamNested*>(kwParam.get());
+                Parameters& gParams = group->getParameters();
+                numParams = gParams.size();
+                for (size_t i = 0; i < numParams; ++i) {
+                    paramContent.push_back(getParamContentInt64(gParams[i]));
+                }
+            } else {
+                paramContent.push_back(getParamContentInt64(kwParam));
+            }
+            (this->*innersetter)(paramContent);
+            alreadySet = true;
+        } else {
+            LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
+        }
+    }
+
+    bool getParamContentBool(Parameter& param)
+    {
+        bool paramContent;
+
+        if(param->getParamType() == PARAM_LOGICAL_EXPRESSION) {
+            ParamType_t& paramExpr = reinterpret_cast<ParamType_t&>(param);
+            paramContent = evaluate(paramExpr->getExpression(), TID_BOOL).getBool();
+        } else {
+            OperatorParamPhysicalExpression* exp =
+                dynamic_cast<OperatorParamPhysicalExpression*>(param.get());
+            SCIDB_ASSERT(exp != nullptr);
+            paramContent = exp->getExpression()->evaluate().getBool();
+        }
+        return paramContent;
+    }
+
+    void setKeywordParamBool(KeywordParameters const& kwParams, const char* const kw, bool& value)
+    {
+        Parameter kwParam = getKeywordParam(kwParams, kw);
+        if (kwParam) {
+            bool paramContent = getParamContentBool(kwParam);
+            LOG4CXX_DEBUG(logger, "EJ setting " << kw << " to " << paramContent);
+            value = paramContent;
+        } else {
+            LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
+        }
+    }
+
+    Parameter getKeywordParam(KeywordParameters const& kwp, const std::string& kw) const
+    {
+        auto const& kwPair = kwp.find(kw);
+        return kwPair == kwp.end() ? Parameter() : kwPair->second;
     }
 
 public:
@@ -364,7 +506,7 @@ public:
 
     Settings(vector<ArrayDesc const*> inputSchemas,
              vector< shared_ptr<OperatorParam> > const& operatorParameters,
-             bool logical,
+             KeywordParameters const& kwParams,
              shared_ptr<Query>& query):
         _leftSchema(*(inputSchemas[0])),
         _rightSchema(*(inputSchemas[1])),
@@ -386,18 +528,6 @@ public:
         _rightOuter(false),
         _outNames(0)
     {
-        string const leftIdsHeader                 = "left_ids=";
-        string const rightIdsHeader                = "right_ids=";
-        string const leftNamesHeader               = "left_names=";
-        string const rightNamesHeader              = "right_names=";
-        string const hashJoinThresholdHeader       = "hash_join_threshold=";
-        string const chunkSizeHeader               = "chunk_size=";
-        string const algorithmHeader               = "algorithm=";
-        string const keepDimensionsHeader          = "keep_dimensions=";
-        string const bloomFilterSizeHeader         = "bloom_filter_size=";
-        string const filterExpressionHeader        = "filter:";
-        string const leftOuterHeader               = "left_outer=";
-        string const rightOuterHeader              = "right_outer=";
         string const outNamesHeader                = "out_names=";
         bool leftIdsSet            = false;
         bool rightIdsSet           = false;
@@ -405,6 +535,7 @@ public:
         bool rightNamesSet         = false;
         bool hashJoinThresholdSet  = false;
         bool chunkSizeSet          = false;
+        bool algorithmSet          = false;
         bool keepDimensionsSet     = false;
         bool bloomFilterSizeSet    = false;
         bool filterExpressionSet   = false;
@@ -412,79 +543,25 @@ public:
         bool rightOuterSet         = false;
         bool outNamesSet           = false;
         size_t const nParams = operatorParameters.size();
-        if (nParams > MAX_PARAMETERS)
-        {   //assert-like exception. Caller should have taken care of this!
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << "illegal number of parameters passed to equi_join";
-        }
-        for (size_t i= 0; i<nParams; ++i)
-        {
-            string parameterString = paramToString(operatorParameters[i], query, logical);
-            if (starts_with(parameterString, leftIdsHeader))
-            {
-                setParam(parameterString, leftIdsSet, leftIdsHeader, &Settings::setParamLeftIds);
-            }
-            else if (starts_with(parameterString, rightIdsHeader ))
-            {
-                setParam(parameterString, rightIdsSet, rightIdsHeader, &Settings::setParamRightIds);
-            }
-            else if (starts_with(parameterString, leftNamesHeader))
-            {
-                setParam(parameterString, leftNamesSet, leftNamesHeader, &Settings::setParamLeftNames);
-            }
-            else if (starts_with(parameterString, rightNamesHeader))
-            {
-                setParam(parameterString, rightNamesSet, rightNamesHeader, &Settings::setParamRightNames);
-            }
-            else if (starts_with(parameterString, hashJoinThresholdHeader))
-            {
-                setParam(parameterString, hashJoinThresholdSet, hashJoinThresholdHeader, &Settings::setParamHashJoinThreshold);
-            }
-            else if (starts_with(parameterString, chunkSizeHeader))
-            {
-                setParam(parameterString, chunkSizeSet, chunkSizeHeader, &Settings::setParamChunkSize);
-            }
-            else if (starts_with(parameterString, algorithmHeader))
-            {
-                setParam(parameterString, _algorithmSet, algorithmHeader, &Settings::setParamAlgorithm);
-            }
-            else if (starts_with(parameterString, keepDimensionsHeader))
-            {
-                setParam(parameterString, keepDimensionsSet, keepDimensionsHeader, &Settings::setParamKeepDimensions);
-            }
-            else if (starts_with(parameterString, bloomFilterSizeHeader))
-            {
-                setParam(parameterString, bloomFilterSizeSet, bloomFilterSizeHeader, &Settings::setParamBloomFilterSize);
-            }
-            else if (starts_with(parameterString, filterExpressionHeader))
-            {
-                setParam(parameterString, filterExpressionSet, filterExpressionHeader, &Settings::setParamFilterExpression);
-            }
-            else if (starts_with(parameterString, leftOuterHeader))
-            {
-                setParam(parameterString, leftOuterSet, leftOuterHeader, &Settings::setParamLeftOuter);
-            }
-            else if (starts_with(parameterString, rightOuterHeader))
-            {
-                setParam(parameterString, rightOuterSet, rightOuterHeader, &Settings::setParamRightOuter);
-            }
-            else if (starts_with(parameterString, outNamesHeader))
-            {
-                setParam(parameterString, outNamesSet, outNamesHeader, &Settings::setParamOutNames);
-            }
-            else
-            {
-                ostringstream error;
-                error << "Unrecognized token '"<<parameterString<<"'";
-                throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
-            }
-        }
+
+        setKeywordParamInt64(kwParams, KW_LEFT_IDS, leftIdsSet, &Settings::setParamLeftIds);
+        setKeywordParamInt64(kwParams, KW_RIGHT_IDS, rightIdsSet, &Settings::setParamRightIds);
+        setKeywordParamJoinField(kwParams, KW_LEFT_NAMES, leftNamesSet, &Settings::setParamLeftNames);
+        setKeywordParamJoinField(kwParams, KW_RIGHT_NAMES, rightNamesSet, &Settings::setParamRightNames);
+        setKeywordParamInt64(kwParams, KW_HASH_JOIN_THRES, hashJoinThresholdSet, &Settings::setParamHashJoinThreshold);
+        setKeywordParamInt64(kwParams, KW_CHUNK_SIZE, chunkSizeSet, &Settings::setParamChunkSize);
+        setKeywordParamString(kwParams, KW_ALGORITHM, algorithmSet, &Settings::setParamAlgorithm);
+        setKeywordParamBool(kwParams, KW_KEEP_DIMS, _keepDimensions);
+        setKeywordParamInt64(kwParams, KW_BLOOM_FILT_SZ, bloomFilterSizeSet, &Settings::setParamBloomFilterSize);
+        setKeywordParamBool(kwParams, KW_LEFT_OUTER, _leftOuter);
+        setKeywordParamBool(kwParams, KW_RIGHT_OUTER, _rightOuter);
+        setKeywordParamJoinField(kwParams, KW_OUT_NAMES, outNamesSet, &Settings::setParamOutNames);
+        setKeywordParamString(kwParams, KW_FILTER, filterExpressionSet, &Settings::setParamFilterExpression);
+
         verifyInputs();
         mapAttributes();
         checkOutputNames();
-        if(filterExpressionSet)
-        {
-            compileExpression(query);
-        }
+        compileExpression(query, kwParams);
         logSettings();
     }
 
@@ -499,8 +576,13 @@ private:
 
     void verifyInputs()
     {
+        LOG4CXX_DEBUG(logger, "Verifying inputs.");
         throwIf(_leftIds.size() && _leftNames.size(),     "both left_ids and left_names are set; use one or the other");
-        throwIf(_rightIds.size() && _rightNames.size(),   "both left_ids and left_names are set; use one or the other");
+        throwIf(_rightIds.size() && _rightNames.size(),   "both right_ids and right_names are set; use one or the other");
+        LOG4CXX_DEBUG(logger, "Left id size: " << _leftIds.size());
+        LOG4CXX_DEBUG(logger, "Left names size: " << _leftNames.size());
+        LOG4CXX_DEBUG(logger, "Right id size: " << _rightIds.size());
+        LOG4CXX_DEBUG(logger, "Right names size: " << _rightNames.size());
         throwIf(_leftIds.size() == 0 && _leftNames.size() == 0,   "no left join-on fields provided");
         throwIf(_rightIds.size() == 0 && _rightNames.size() == 0, "no right join-on fields provided");
         if(_leftNames.size())
@@ -509,14 +591,14 @@ private:
             {
                 string const& name = _leftNames[i];
                 bool found = false;
-                for(AttributeID j = 0; j<_numLeftAttrs; ++j)
+                for(const auto& attr : _leftSchema.getAttributes())
                 {
-                    AttributeDesc const& attr = _leftSchema.getAttributes()[j];
+                    LOG4CXX_DEBUG(logger, "Testing left size for: " << attr.getName());
                     if(attr.getName() == name)
                     {
                         if(!found)
                         {
-                            _leftIds.push_back(j);
+                            _leftIds.push_back(attr.getId());
                             found = true;
                         }
                         else
@@ -530,6 +612,7 @@ private:
                 for(size_t j = 0; j<_numLeftDims; ++j)
                 {
                     DimensionDesc const& dim = _leftSchema.getDimensions()[j];
+                    LOG4CXX_DEBUG(logger, "EJ checking " << name << " against " << dim.getBaseName());
                     if(dim.getBaseName() == name)
                     {
                         if(!found)
@@ -559,14 +642,13 @@ private:
             {
                 string const& name = _rightNames[i];
                 bool found = false;
-                for(AttributeID j = 0; j<_numRightAttrs; ++j)
+                for(const auto& attr : _rightSchema.getAttributes())
                 {
-                    AttributeDesc const& attr = _rightSchema.getAttributes()[j];
                     if(attr.getName() == name)
                     {
                         if(!found)
                         {
-                            _rightIds.push_back(j);
+                            _rightIds.push_back(attr.getId());
                             found = true;
                         }
                         else
@@ -608,10 +690,11 @@ private:
         {
             size_t leftKey  = _leftIds[i];
             size_t rightKey = _rightIds[i];
+            LOG4CXX_DEBUG(logger, "EJ leftKey is " << leftKey);
             throwIf(leftKey  >= _numLeftAttrs + _numLeftDims,  "left id out of bounds");
             throwIf(rightKey >= _numRightAttrs + _numRightDims, "right id out of bounds");
-            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
-            TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true)[rightKey].getType() : TID_INT64;
+            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true).findattr(leftKey).getType()   : TID_INT64;
+            TypeId rightType  = rightKey < _numRightAttrs ? _rightSchema.getAttributes(true).findattr(rightKey).getType() : TID_INT64;
             throwIf(leftType != rightType, "key types do not match");
         }
         throwIf( _algorithmSet && _algorithm == HASH_REPLICATE_LEFT  && isLeftOuter(),  "left replicate algorithm cannot be used for left  outer join");
@@ -631,9 +714,9 @@ private:
             throwIf(_rightMapToTuple[rightKey] != -1, "right keys not unique");
             _leftMapToTuple[leftKey]   = i;
             _rightMapToTuple[rightKey] = i;
-            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true)[leftKey].getType()   : TID_INT64;
-            bool leftNullable  = leftKey  < _numLeftAttrs  ?  _leftSchema.getAttributes(true)[leftKey].isNullable()   : false;
-            bool rightNullable = rightKey < _numRightAttrs  ? _rightSchema.getAttributes(true)[rightKey].isNullable() : false;
+            TypeId leftType   = leftKey  < _numLeftAttrs  ? _leftSchema.getAttributes(true).findattr(leftKey).getType()   : TID_INT64;
+            bool leftNullable  = leftKey  < _numLeftAttrs  ?  _leftSchema.getAttributes(true).findattr(leftKey).isNullable()   : false;
+            bool rightNullable = rightKey < _numRightAttrs  ? _rightSchema.getAttributes(true).findattr(rightKey).isNullable() : false;
             _keyComparators.push_back(AttributeComparator(leftType));
             _keyNullable.push_back( leftNullable || rightNullable );
         }
@@ -687,15 +770,34 @@ private:
         }
     }
 
-    void compileExpression(shared_ptr<Query>& query)
+    void compileExpression(shared_ptr<Query>& query, KeywordParameters const& kwParams)
     {
-        shared_ptr<LogicalExpression> logicalExpr = parseExpression(_filterExpressionString);
-        ArrayDesc inputDesc = getOutputSchema(query);
-        vector<ArrayDesc> inputDescs;
-        inputDescs.push_back(inputDesc);
-        ArrayDesc outputDesc =inputDesc;
-        _filterExpression.reset(new Expression());
-        _filterExpression->compile(logicalExpr, false, TID_BOOL, inputDescs, outputDesc);
+        Parameter kwParam = getKeywordParam(kwParams, KW_FILTER);
+
+        if (kwParam) {
+            ArrayDesc inputDesc = getOutputSchema(query);
+            vector<ArrayDesc> inputDescs;
+            inputDescs.push_back(inputDesc);
+            ArrayDesc outputDesc =inputDesc;
+
+            shared_ptr<LogicalExpression> lExpr = parseExpression(_filterExpressionString);
+
+            _filterExpression.reset(new Expression());
+            _filterExpression->compile(lExpr, false, TID_BOOL, inputDescs, outputDesc);
+
+//            } else if(kwParam->getParamType() == PARAM_PHYSICAL_EXPRESSION) {
+//                string filter = ((std::shared_ptr<OperatorParamPhysicalExpression>&)kwParam)->getExpression()->evaluate().getString();
+//                LOG4CXX_DEBUG(logger, "EJ physical filter is: " << filter);
+//                shared_ptr<LogicalExpression> lExp = parseExpression("a=c");
+
+//                auto param = dynamic_pointer_cast<OperatorParamPhysicalExpression>(kwParam);
+//                auto lExp = dynamic_pointer_cast<LogicalExpression>(param->getExpression());
+//                _filterExpression=lExp;
+
+//                _filterExpression.reset(new Expression());
+//                _filterExpression->compile(lExp, false, TID_BOOL, inputDescs, outputDesc);
+//            }
+        }
     }
 
     void logSettings()
@@ -709,7 +811,6 @@ private:
         output<<" chunk "<<_chunkSize;
         output<<" keep_dimensions "<<_keepDimensions;
         output<<" bloom filter size "<<_bloomFilterSize;
-        output<<" expression "<<_filterExpressionString;
         output<<" left outer "<<_leftOuter;
         output<<" right outer "<<_rightOuter;
         LOG4CXX_DEBUG(logger, "EJ keys "<<output.str().c_str());
@@ -871,15 +972,16 @@ public:
     ArrayDesc getOutputSchema(shared_ptr< Query> const& query) const
     {
         Attributes outputAttributes(getNumOutputAttrs());
+        std::vector<AttributeDesc> tmpOutput(getNumOutputAttrs());
         ArrayDesc const& leftSchema = getLeftSchema();
         size_t const numLeftAttrs = getNumLeftAttrs();
         size_t const numLeftDims  = getNumLeftDims();
         ArrayDesc const& rightSchema = getRightSchema();
         size_t const numRightAttrs = getNumRightAttrs();
         size_t const numRightDims  = getNumRightDims();
-        for(AttributeID i =0; i<numLeftAttrs; ++i)
+        size_t i = 0;
+        for(const auto& input : _leftSchema.getAttributes(true))
         {
-            AttributeDesc const& input = leftSchema.getAttributes(true)[i];
             AttributeID destinationId = mapLeftToOutput(i);
             uint16_t flags = input.getFlags();
             if( isRightOuter() || (isLeftKey(i) && isKeyNullable(destinationId)))
@@ -887,7 +989,8 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            tmpOutput[destinationId] = AttributeDesc(name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            i++;
         }
         for(size_t i =0; i<numLeftDims; ++i)
         {
@@ -903,15 +1006,17 @@ public:
                 flags = AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, flags, CompressorType::NONE);
+            tmpOutput[destinationId] = AttributeDesc(name, TID_INT64, flags, CompressorType::NONE);
         }
-        for(AttributeID i =0; i<numRightAttrs; ++i)
+
+        i = 0;
+        for(const auto& input : _rightSchema.getAttributes(true))
         {
             if(isRightKey(i)) //already in the schema
             {
+                i++;
                 continue;
             }
-            AttributeDesc const& input = rightSchema.getAttributes(true)[i];
             AttributeID destinationId = mapRightToOutput(i);
             uint16_t flags = input.getFlags();
             if(isLeftOuter())
@@ -919,7 +1024,8 @@ public:
                 flags |= AttributeDesc::IS_NULLABLE;
             }
             string const& name = _outNames.size() ? _outNames[destinationId] : input.getName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            tmpOutput[destinationId] = AttributeDesc(name, input.getType(), flags, CompressorType::NONE, input.getAliases());
+            i++;
         }
         for(size_t i =0; i<numRightDims; ++i)
         {
@@ -930,17 +1036,25 @@ public:
             }
             DimensionDesc const& inputDim = rightSchema.getDimensions()[i];
             string const& name = _outNames.size() ? _outNames[destinationId] : inputDim.getBaseName();
-            outputAttributes[destinationId] = AttributeDesc(destinationId, name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
+            tmpOutput[destinationId] = AttributeDesc(name, TID_INT64, isLeftOuter() ? AttributeDesc::IS_NULLABLE : 0, CompressorType::NONE);
         }
-        outputAttributes = addEmptyTagAttribute(outputAttributes);
+        for (size_t i = 0; i < getNumOutputAttrs(); ++i) {
+            const AttributeDesc pushable(tmpOutput[i]);
+            outputAttributes.push_back(pushable);
+        }
+        outputAttributes.addEmptyTagAttribute();
+
         Dimensions outputDimensions;
         outputDimensions.push_back(DimensionDesc("instance_id", 0, _numInstances-1,            1,          0));
         outputDimensions.push_back(DimensionDesc("value_no",    0, CoordinateBounds::getMax(), _chunkSize, 0));
-        return ArrayDesc("equi_join", outputAttributes, outputDimensions, defaultPartitioning(), query->getDefaultArrayResidency());
+        return ArrayDesc("equi_join", outputAttributes, outputDimensions, createDistribution(dtUndefined), query->getDefaultArrayResidency());
     }
+
 };
 
-} } //namespaces
+}
+
+
+} //namespaces
 
 #endif //EQUI_JOIN_SETTINGS
-
