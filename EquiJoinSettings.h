@@ -312,31 +312,6 @@ private:
         }
     }
 
-    void setParam (string const& parameterString, bool& alreadySet, string const& header, void (Settings::* innersetter)(string) )
-    {
-        string paramContent = parameterString.substr(header.size());
-        if (alreadySet)
-        {
-            string h = parameterString.substr(0, header.size()-1);
-            ostringstream error;
-            error<<"illegal attempt to set "<<h<<" multiple times";
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
-        }
-        trim(paramContent);
-        (this->*innersetter)(paramContent);
-        alreadySet = true;
-    }
-
-    void checkIfSet(bool alreadySet, const char* kw)
-    {
-        if (alreadySet)
-        {
-            ostringstream error;
-            error<<"illegal attempt to set "<<kw<<" multiple times";
-            throw SYSTEM_EXCEPTION(SCIDB_SE_INTERNAL, SCIDB_LE_ILLEGAL_OPERATION) << error.str().c_str();
-        }
-    }
-
     string getParamContentString(Parameter& param)
     {
         string paramContent;
@@ -353,9 +328,10 @@ private:
         return paramContent;
     }
 
-    void setKeywordParamString(KeywordParameters const& kwParams, const char* const kw, bool& alreadySet, void (Settings::* innersetter)(vector<string>) )
+    void setKeywordParamString(KeywordParameters const& kwParams,
+                               const char* const kw,
+                               void (Settings::* innersetter)(vector<string>) )
     {
-        checkIfSet(alreadySet, kw);
         vector <string> paramContent;
 
         Parameter kwParam = getKeywordParam(kwParams, kw);
@@ -370,7 +346,6 @@ private:
                 paramContent.push_back(getParamContentString(kwParam));
             }
             (this->*innersetter)(paramContent);
-            alreadySet = true;
         } else {
             LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
         }
@@ -397,13 +372,11 @@ private:
 
     void setKeywordParamJoinField(KeywordParameters const& kwParams,
                                   const char* const kw,
-                                  bool& alreadySet,
                                   void (Settings::* innersetter)(vector<string>) )
     /**
      * This function works for both Dimension names and Attribute names.
      */
     {
-        checkIfSet(alreadySet, kw);
         vector<string> paramContent;
         Parameter kwParam = getKeywordParam(kwParams, kw);
         if (kwParam) {
@@ -417,7 +390,6 @@ private:
                 paramContent.push_back(getParamContentJoinField(kwParam));
             }
             (this->*innersetter)(paramContent);
-            alreadySet = true;
         } else {
             LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
         }
@@ -441,10 +413,8 @@ private:
         return paramContent;
     }
 
-    void setKeywordParamInt64(KeywordParameters const& kwParams, const char* const kw, bool& alreadySet, void (Settings::* innersetter)(vector<int64_t>) )
+    void setKeywordParamInt64(KeywordParameters const& kwParams, const char* const kw, void (Settings::* innersetter)(vector<int64_t>) )
     {
-        checkIfSet(alreadySet, kw);
-
         vector<int64_t> paramContent;
         size_t numParams;
 
@@ -461,7 +431,6 @@ private:
                 paramContent.push_back(getParamContentInt64(kwParam));
             }
             (this->*innersetter)(paramContent);
-            alreadySet = true;
         } else {
             LOG4CXX_DEBUG(logger, "EJ findKeyword null: " << kw);
         }
@@ -519,7 +488,7 @@ public:
         _chunkSize(1000000),
         _numInstances(query->getInstancesCount()),
         _algorithm(HASH_REPLICATE_RIGHT),
-        _algorithmSet(false),
+        _algorithmSet(kwParams.find(KW_ALGORITHM) != kwParams.end()),
         _keepDimensions(false),
         _bloomFilterSize(33554467), //about 4MB, why not?
         _filterExpressionString(""),
@@ -529,34 +498,21 @@ public:
         _outNames(0)
     {
         string const outNamesHeader                = "out_names=";
-        bool leftIdsSet            = false;
-        bool rightIdsSet           = false;
-        bool leftNamesSet          = false;
-        bool rightNamesSet         = false;
-        bool hashJoinThresholdSet  = false;
-        bool chunkSizeSet          = false;
-        bool algorithmSet          = false;
-        bool keepDimensionsSet     = false;
-        bool bloomFilterSizeSet    = false;
-        bool filterExpressionSet   = false;
-        bool leftOuterSet          = false;
-        bool rightOuterSet         = false;
-        bool outNamesSet           = false;
         size_t const nParams = operatorParameters.size();
 
-        setKeywordParamInt64(kwParams, KW_LEFT_IDS, leftIdsSet, &Settings::setParamLeftIds);
-        setKeywordParamInt64(kwParams, KW_RIGHT_IDS, rightIdsSet, &Settings::setParamRightIds);
-        setKeywordParamJoinField(kwParams, KW_LEFT_NAMES, leftNamesSet, &Settings::setParamLeftNames);
-        setKeywordParamJoinField(kwParams, KW_RIGHT_NAMES, rightNamesSet, &Settings::setParamRightNames);
-        setKeywordParamInt64(kwParams, KW_HASH_JOIN_THRES, hashJoinThresholdSet, &Settings::setParamHashJoinThreshold);
-        setKeywordParamInt64(kwParams, KW_CHUNK_SIZE, chunkSizeSet, &Settings::setParamChunkSize);
-        setKeywordParamString(kwParams, KW_ALGORITHM, algorithmSet, &Settings::setParamAlgorithm);
+        setKeywordParamInt64(kwParams, KW_LEFT_IDS, &Settings::setParamLeftIds);
+        setKeywordParamInt64(kwParams, KW_RIGHT_IDS, &Settings::setParamRightIds);
+        setKeywordParamJoinField(kwParams, KW_LEFT_NAMES, &Settings::setParamLeftNames);
+        setKeywordParamJoinField(kwParams, KW_RIGHT_NAMES, &Settings::setParamRightNames);
+        setKeywordParamInt64(kwParams, KW_HASH_JOIN_THRES, &Settings::setParamHashJoinThreshold);
+        setKeywordParamInt64(kwParams, KW_CHUNK_SIZE, &Settings::setParamChunkSize);
+        setKeywordParamString(kwParams, KW_ALGORITHM, &Settings::setParamAlgorithm);
         setKeywordParamBool(kwParams, KW_KEEP_DIMS, _keepDimensions);
-        setKeywordParamInt64(kwParams, KW_BLOOM_FILT_SZ, bloomFilterSizeSet, &Settings::setParamBloomFilterSize);
+        setKeywordParamInt64(kwParams, KW_BLOOM_FILT_SZ, &Settings::setParamBloomFilterSize);
         setKeywordParamBool(kwParams, KW_LEFT_OUTER, _leftOuter);
         setKeywordParamBool(kwParams, KW_RIGHT_OUTER, _rightOuter);
-        setKeywordParamJoinField(kwParams, KW_OUT_NAMES, outNamesSet, &Settings::setParamOutNames);
-        setKeywordParamString(kwParams, KW_FILTER, filterExpressionSet, &Settings::setParamFilterExpression);
+        setKeywordParamJoinField(kwParams, KW_OUT_NAMES, &Settings::setParamOutNames);
+        setKeywordParamString(kwParams, KW_FILTER, &Settings::setParamFilterExpression);
 
         verifyInputs();
         mapAttributes();

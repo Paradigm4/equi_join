@@ -448,6 +448,7 @@ public:
             sortingAttributeInfos[k+1].ascent = true;
         }
         SortArray sorter(inputArray->getArrayDesc(), _arena);
+        sorter.setChunkSize(settings.getChunkSize());
         shared_ptr<TupleComparator> tcomp(make_shared<TupleComparator>(sortingAttributeInfos, inputArray->getArrayDesc()));
         return sorter.getSortedArray(inputArray, query, shared_from_this(), tcomp);
     }
