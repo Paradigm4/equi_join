@@ -62,9 +62,17 @@ $ iquery -aq "equi_join(left, right, left_names:'a', right_names:'c', left_outer
 {3,1} 'jkl',3.3,null
 ```
 
-Join on two keys: left.i = right.d (dimension to attribute) and left.a=right.c. Note we can use -1-based dimension and 0-based attribute identifiers instead of names:
+Join on two keys: left.i = right.d (dimension to attribute) and left.a=right.c. 
+
 ```
-$ iquery -aq "equi_join(left, right, left_ids:-1,0, right_ids:1,0)"
+iquery -aq "equi_join(left, right, left_names:(i,a), right_names:(d,c))"
+{instance_id,value_no} i,a,b
+{1,0} 1,'def',1.1
+```
+
+Note we can use -1-based dimension and 0-based attribute identifiers instead of names:
+```
+$ iquery -aq "equi_join(left, right, left_ids:(-1,0), right_ids:(1,0))"
 {instance_id,value_no} i,a,b
 {0,0} 1,'def',1.1
 ```
@@ -125,7 +133,7 @@ equi_join(left_array, right_array, [, setting:value` [,...]])
 Where left and right array could be any SciDB arrays or operator outputs.
 
 ### Specifying join-on fields (keys)
-* `left_names:(a,b,c`: comma-separated dimension or attribute names from the left array
+* `left_names:(a,b,c)`: comma-separated dimension or attribute names from the left array
 * `left_ids:(a,-b,c): -1-based dimension or attribute numbers from the left array
 * `right_names:(d,e,f)`: comma-seaparated dimension or attribute names from the right array
 * `right_ids:d,e,f`: -1-based dimension or attribute numbers from the right array
