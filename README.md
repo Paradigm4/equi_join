@@ -134,12 +134,42 @@ Where left and right array could be any SciDB arrays or operator outputs.
 
 ### Specifying join-on fields (keys)
 * `left_names:(a,b,c)`: comma-separated dimension or attribute names from the left array
-* `left_ids:(a,-b,c): -1-based dimension or attribute numbers from the left array
+* `left_ids:(a,-b,c)`: -1-based dimension or attribute numbers from the left array
 * `right_names:(d,e,f)`: comma-seaparated dimension or attribute names from the right array
 * `right_ids:d,e,f`: -1-based dimension or attribute numbers from the right array
 
 You can use either `names` or `ids` for either array. There must be an equal number of left and right keys and they must match data types; dimensions are int64. TBD: auto-detect fields with the same name if not specified.
 
+### When joining on identically named keys
+
+```sh
+# We build up another test array below
+iquery -aq "store(apply(right, b, double(1.1)), right2)"
+iquery -aq "scan(right2)"
+# # {j} b,c,d
+# {1} 1.1,'def',1
+# {2} 1.1,'mno',2
+# {3} 1.1,null,3
+# {4} 1.1,'def',4
+
+iquery -aq "equi_join(left, right2, left_names:b, right_names:b)"
+# ... gives the error
+# Error description: Query syntax error. Attribute 'b' is ambiguous.
+
+# Instead we should qualify the join keys explicitly as follows
+iquery -aq "equi_join(left as X, right2 as Y, left_names:X.b, right_names:Y.b)"
+# {instance_id,value_no} b,a,c,d
+# {3,0} 1.1,'def','def',4
+# {15,0} 1.1,'def','def',1
+# {15,1} 1.1,'def','mno',2
+# {15,2} 1.1,'def',null,3
+
+# .. or when joining on multiple keys
+iquery -aq "equi_join(left as X, right2 as Y, left_names:(X.b,X.a), right_names:(Y.b,Y.c))"
+# {instance_id,value_no} b,a,d
+# {3,0} 1.1,'def',4
+# {15,0} 1.1,'def',1
+```
 ### Outer joins
 * `left_outer:false/true`: if set to `true` or `1` perform a left outer join: include all cells from the left array and populate with nulls where there are no corresponding cells in the right array
 * `right_outer:false/true`: if set to `true` or `1` perform a right outer join: include all cells from the right array and populate with nulls where there are no corresponding cells in the left array
