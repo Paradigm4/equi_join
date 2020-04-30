@@ -39,6 +39,7 @@ LIBS = -shared -Wl,-soname,libequi_join.so -ldl -L. \
 SRCS = LogicalEquiJoin.cpp \
        PhysicalEquiJoin.cpp
 
+
 # Compiler settings for SciDB version >= 15.7
 ifneq ("$(wildcard /usr/bin/g++-4.9)","")
  CC := "/usr/bin/gcc-4.9"
@@ -49,6 +50,12 @@ else
   CC := "/opt/rh/devtoolset-3/root/usr/bin/gcc"
   CXX := "/opt/rh/devtoolset-3/root/usr/bin/g++"
   CCFLAGS+=-std=c++14 -DCPP14
+ else
+  GCC_VER_5 := $(shell echo `gcc -dumpversion | cut -f1-2 -d.` \>= 5 | bc )
+  $(info gcc version is $(GCC_VER_5))
+	ifeq ("$(GCC_VER_5)", "1")
+		CCFLAGS+=-std=c++11 -std=gnu++14
+	endif
  endif
 endif
 

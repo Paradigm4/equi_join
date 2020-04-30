@@ -449,7 +449,7 @@ public:
         }
         SortArray sorter(inputArray->getArrayDesc(), _arena);
         sorter.setChunkSize(settings.getChunkSize());
-        shared_ptr<TupleComparator> tcomp(make_shared<TupleComparator>(sortingAttributeInfos, inputArray->getArrayDesc()));
+        shared_ptr<TupleComparator> tcomp(std::make_shared<TupleComparator>(sortingAttributeInfos, inputArray->getArrayDesc()));
         return sorter.getSortedArray(inputArray, query, shared_from_this(), tcomp);
     }
 
