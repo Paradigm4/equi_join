@@ -927,7 +927,7 @@ public:
 
     ArrayDesc getOutputSchema(shared_ptr< Query> const& query) const
     {
-        Attributes outputAttributes(getNumOutputAttrs());
+        Attributes outputAttributes;
         std::vector<AttributeDesc> tmpOutput(getNumOutputAttrs());
         ArrayDesc const& leftSchema = getLeftSchema();
         size_t const numLeftAttrs = getNumLeftAttrs();
