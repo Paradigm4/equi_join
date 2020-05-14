@@ -342,7 +342,7 @@ template <Handedness WHICH>
 ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& query)
 {
     size_t const numAttrs = ( WHICH == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize()) + 1; //plus hash
-    Attributes outputAttributes(numAttrs);
+    Attributes outputAttributes;
     std::vector<AttributeDesc> tmpOutput(numAttrs);
     tmpOutput[numAttrs-1] = AttributeDesc("hash", TID_UINT32, 0, CompressorType::NONE);
     ArrayDesc const& inputSchema = ( WHICH == LEFT ? settings.getLeftSchema() : settings.getRightSchema());

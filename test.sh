@@ -3,7 +3,15 @@
 MYDIR=`dirname $0`
 pushd $MYDIR > /dev/null
 MYDIR=`pwd`
-OUTFILE=$MYDIR/test.out
+
+# --outfile <filename> : write iquery output to the given file.
+# This is important for running in the SciDB test harness.
+if [ "$1" = "--outfile" ]; then
+    OUTFILE="$2"
+    shift 2
+else
+    OUTFILE=$MYDIR/test.out
+fi
 EXPFILE=$MYDIR/test.expected
 
 # Use csv:l format instead of the default dcsv, to suppress printing dimensions
@@ -18,7 +26,7 @@ log_query () {
 # Use this to log output of queries that don't sort their output.
 # The output is sorted by the shell before writing to the log file.
 log_unsorted_query () {
-    ( iquery "$FMT" -aq "$1" 2>>$OUTFILE ) | print_header_then sort >> $OUTFILE
+    ( iquery "$FMT" -aq "$1" | print_header_then sort ) >> $OUTFILE 2>&1
 }
 
 # Helper function for log_unsorted_query.
