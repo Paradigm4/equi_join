@@ -439,4 +439,4 @@ log_query "sort(equi_join(left, right, left_names:i, right_names:j, left_outer:1
 log_query "sort(equi_join(left, right, left_names:i, right_names:j, left_outer:1, right_outer:1, algorithm:'merge_left_first'),  i)"
 log_query "sort(equi_join(left, right, left_names:i, right_names:j, left_outer:1, right_outer:1, algorithm:'merge_right_first'), i)"
 
-diff test.out test.expected && echo "$(basename $0) succeeded"
+diff $OUTFILE test.expected && echo "$(basename $0) succeeded"
