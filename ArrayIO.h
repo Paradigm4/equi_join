@@ -68,8 +68,9 @@ public:
         }
         size_t byteIdx = idx / 8;
         size_t bitIdx  = idx - byteIdx * 8;
+        assert(bitIdx < 8);
         char& b = _data[ byteIdx ];
-        b = b | (1 << bitIdx);
+        b = b | static_cast<char>(1 << bitIdx);
     }
 
     bool get(size_t const& idx) const
@@ -80,8 +81,9 @@ public:
         }
         size_t byteIdx = idx / 8;
         size_t bitIdx  = idx - byteIdx * 8;
+        assert(bitIdx < 8);
         char const& b = _data[ byteIdx ];
-        return (b & (1 << bitIdx));
+        return (b & static_cast<char>(1 << bitIdx));
     }
 
     size_t getBitSize() const
@@ -107,7 +109,7 @@ public:
         }
         for(size_t i =0; i<_data.size(); ++i)
         {
-            _data[i] |= other._data[i];
+            _data[i] = static_cast<char>(_data[i] | other._data[i]);
         }
     }
 };
@@ -130,16 +132,20 @@ public:
 
     void addData(void const* data, size_t const dataSize )
     {
-        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed1) % _vec.getBitSize();
-        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed2) % _vec.getBitSize();
+        uint32_t bitSize = safe_static_cast<uint32_t>(_vec.getBitSize());
+        uint32_t len = safe_static_cast<uint32_t>(dataSize);
+        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, len, hashSeed1) % bitSize;
+        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, len, hashSeed2) % bitSize;
         _vec.set(hash1);
         _vec.set(hash2);
     }
 
     bool hasData(void const* data, size_t const dataSize ) const
     {
-        uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed1) % _vec.getBitSize();
-        uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, dataSize, hashSeed2) % _vec.getBitSize();
+         uint32_t bitSize = safe_static_cast<uint32_t>(_vec.getBitSize());
+         uint32_t len = safe_static_cast<uint32_t>(dataSize);
+         uint32_t hash1 = JoinHashTable::murmur3_32((char const*) data, len, hashSeed1) % bitSize;
+         uint32_t hash2 = JoinHashTable::murmur3_32((char const*) data, len, hashSeed2) % bitSize;
         return _vec.get(hash1) && _vec.get(hash2);
     }
 
@@ -351,7 +357,8 @@ ArrayDesc makeTupledSchema(Settings const& settings, shared_ptr< Query> const& q
     size_t i = 0;
     for(const auto& input : inputSchema.getAttributes(true))
     {
-        AttributeID destinationId = (WHICH == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i));
+        AttributeID destinationId = safe_static_cast<AttributeID>(
+            WHICH == LEFT ? settings.mapLeftToTuple(i) : settings.mapRightToTuple(i));
         uint16_t flags = input.getFlags();
         if( (WHICH == LEFT ? settings.isLeftKey(i) : settings.isRightKey(i)) && settings.isKeyNullable(destinationId) )
         {
@@ -473,8 +480,9 @@ public:
             _outputPosition[2] = 0;
             if(MODE == WRITE_SPLIT_ON_HASH)
             {
-                uint32_t break_interval = settings.getNumHashBuckets() / _numInstances;
-                for(size_t i=0; i<_numInstances-1; ++i)
+                uint32_t break_interval = safe_static_cast<uint32_t>(
+                    settings.getNumHashBuckets() / _numInstances);
+                for(uint32_t i=0; i<_numInstances-1; ++i)
                 {
                     _hashBreaks[i] = break_interval * (i+1);
                 }
