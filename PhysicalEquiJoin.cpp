@@ -413,7 +413,7 @@ public:
     {
         ArrayReader<WHICH, READ_INPUT, INCLUDE_NULL_TUPLES> reader(inputArray, settings, chunkFilterToApply, bloomFilterToApply);
         ArrayWriter<WRITE_TUPLED> writer(settings, query, makeTupledSchema<WHICH>(settings, query));
-        size_t const hashMod = settings.getNumHashBuckets();
+        uint32_t const hashMod = safe_static_cast<uint32_t>(settings.getNumHashBuckets());
         vector<char> hashBuf(64);
         size_t const numKeys = settings.getNumKeys();
         Value hashVal;
@@ -439,10 +439,10 @@ public:
     shared_ptr<Array> sortArray(shared_ptr<Array> & inputArray, shared_ptr<Query>& query, Settings const& settings)
     {
         SortingAttributeInfos sortingAttributeInfos(settings.getNumKeys() + 1); //plus hash
-        sortingAttributeInfos[0].columnNo = inputArray->getArrayDesc().getAttributes(true).size()-1;
+        sortingAttributeInfos[0].columnNo = safe_static_cast<int>(inputArray->getArrayDesc().getAttributes(true).size()-1);
         //        sortingAttributeInfos[0].columnNo = inputArray->getArrayDesc().getEmptyBitmapAttribute()->getId();
         sortingAttributeInfos[0].ascent = true;
-        for(size_t k=0; k<settings.getNumKeys(); ++k)
+        for(uint32_t k=0; k<settings.getNumKeys(); ++k)
         {
             sortingAttributeInfos[k+1].columnNo = k;
             sortingAttributeInfos[k+1].ascent = true;
@@ -476,7 +476,6 @@ public:
         ArrayReader<RIGHT, READ_SORTED> rightReader(rightSorted, settings);
         vector<Value> previousLeftKeys(numKeys);
         Coordinate previousRightIdx = -1;
-        uint32_t previousLeftHash;
         size_t const leftTupleSize = settings.getLeftTupleSize();
         size_t const rightTupleSize = settings.getRightTupleSize();
         while(!leftReader.end() && !rightReader.end())

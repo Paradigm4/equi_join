@@ -170,7 +170,8 @@ private:
         for (size_t i = 0; i < content.size(); ++i) {
             size_t val;
             if (content[i] < 0)  // It's a dimension
-                val = shift + abs(content[i] + 1);
+                // labs == abs() for long ints
+                val = shift + labs(content[i] + 1);
             else
                 val = content[i]; // It's an attribute
             keys.push_back(val);
@@ -498,7 +499,6 @@ public:
         _outNames(0)
     {
         string const outNamesHeader                = "out_names=";
-        size_t const nParams = operatorParameters.size();
 
         setKeywordParamInt64(kwParams, KW_LEFT_IDS, &Settings::setParamLeftIds);
         setKeywordParamInt64(kwParams, KW_RIGHT_IDS, &Settings::setParamRightIds);
@@ -933,13 +933,12 @@ public:
         size_t const numLeftAttrs = getNumLeftAttrs();
         size_t const numLeftDims  = getNumLeftDims();
         ArrayDesc const& rightSchema = getRightSchema();
-        size_t const numRightAttrs = getNumRightAttrs();
         size_t const numRightDims  = getNumRightDims();
         size_t i = 0;
         for(const auto& input : _leftSchema.getAttributes(true))
         {
-            AttributeID destinationId = mapLeftToOutput(i);
-            uint16_t flags = input.getFlags();
+            AttributeID destinationId = safe_static_cast<AttributeID>(mapLeftToOutput(i));
+            int16_t flags = input.getFlags();
             if( isRightOuter() || (isLeftKey(i) && isKeyNullable(destinationId)))
             {
                 flags |= AttributeDesc::IS_NULLABLE;
@@ -973,8 +972,8 @@ public:
                 i++;
                 continue;
             }
-            AttributeID destinationId = mapRightToOutput(i);
-            uint16_t flags = input.getFlags();
+            AttributeID destinationId = safe_static_cast<AttributeID>(mapRightToOutput(i));
+            int16_t flags = input.getFlags();
             if(isLeftOuter())
             {
                 flags |= AttributeDesc::IS_NULLABLE;

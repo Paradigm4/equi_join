@@ -143,7 +143,7 @@ private:
     size_t const                             _numAttributes;
     size_t const                             _numKeys;
     vector<AttributeComparator>              _keyComparators;
-    size_t const                             _numHashBuckets;
+    uint32_t const                           _numHashBuckets;
     mgd::vector<HashTableEntry*>             _buckets;
     std::vector<Value>                       _values;
     ssize_t                                  _largeValueMemory;
@@ -158,7 +158,7 @@ public:
             _numAttributes(numAttributes),
             _numKeys(_settings.getNumKeys()),
             _keyComparators(_settings.getKeyComparators()),
-            _numHashBuckets(_settings.getNumHashBuckets()),
+            _numHashBuckets(safe_static_cast<uint32_t>(_settings.getNumHashBuckets())),
             _buckets(_arena, _numHashBuckets, NULL),
             _values(0),
             _largeValueMemory(0),
@@ -226,7 +226,7 @@ public:
                 ch += keys[i]->size();
             }
         }
-        return murmur3_32(&buf[0], totalSize);
+        return murmur3_32(&buf[0], safe_static_cast<uint32_t>(totalSize));
     }
 
     uint32_t hashKeys(vector<Value const*> const& keys, size_t const numKeys) const
