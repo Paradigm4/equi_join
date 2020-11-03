@@ -201,7 +201,7 @@ public:
         if(!query->isCoordinator())
         {
            InstanceID coordinator = query->getCoordinatorID();
-           shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
+           shared_ptr<SharedBuffer> buf(new MemoryBuffer(SCIDB_CODE_LOC, NULL, _vec.getByteSize()));
            memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            BufSend(coordinator, buf, query);
            buf = BufReceive(coordinator,query);
@@ -223,7 +223,7 @@ public:
                   _vec.orIn(incoming);
               }
            }
-           shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, _vec.getByteSize()));
+           shared_ptr<SharedBuffer> buf(new MemoryBuffer(SCIDB_CODE_LOC, NULL, _vec.getByteSize()));
            memcpy(buf->getWriteData(), _vec.getData(), _vec.getByteSize());
            for(InstanceID i=0; i<nInstances; ++i)
            {

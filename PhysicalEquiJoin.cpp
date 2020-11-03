@@ -94,7 +94,7 @@ public:
         size_t overhead =  computeArrayOverhead<WHICH>(input, query, settings);
         size_t const nInstances = query->getInstancesCount();
         InstanceID myId = query->getInstanceID();
-        std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(size_t)));
+        std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(SCIDB_CODE_LOC, NULL, sizeof(size_t)));
         *((size_t*) buf->getWriteData()) = overhead;
         for(InstanceID i=0; i<nInstances; i++)
         {
@@ -121,7 +121,7 @@ public:
      */
     bool agreeOnBoolean(bool value, shared_ptr<Query>& query)
     {
-        std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(bool)));
+        std::shared_ptr<SharedBuffer> buf(new MemoryBuffer(SCIDB_CODE_LOC, NULL, sizeof(bool)));
         InstanceID myId = query->getInstanceID();
         *((bool*) buf->getWriteData()) = value;
         for(InstanceID i=0; i<query->getInstancesCount(); i++)
@@ -238,7 +238,7 @@ public:
         }
         leftSizeEst+=localResult.leftSizeEstimate;
         rightSizeEst+=localResult.rightSizeEstimate;
-        shared_ptr<SharedBuffer> buf(new MemoryBuffer(NULL, sizeof(PreScanResult)));
+        shared_ptr<SharedBuffer> buf(new MemoryBuffer(SCIDB_CODE_LOC, NULL, sizeof(PreScanResult)));
         InstanceID myId = query->getInstanceID();
         *((PreScanResult*) buf->getWriteData()) = localResult;
         for(InstanceID i=0; i<query->getInstancesCount(); i++)
