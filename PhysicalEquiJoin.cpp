@@ -391,7 +391,7 @@ public:
         shared_ptr<Array> redistributed = (WHICH_REPLICATED == LEFT ? inputArrays[0] : inputArrays[1]);
         redistributed = redistributeToRandomAccess(redistributed, createDistribution(dtReplication), ArrayResPtr(), query, shared_from_this());
         ArenaPtr operatorArena = this->getArena();
-        ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
+        ArenaPtr hashArena(newArena(Options("PhysicalEquiJoin::replicationHashJoin()").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
         JoinHashTable table(settings, hashArena, WHICH_REPLICATED == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
         shared_ptr<ChunkFilter<WHICH_REPLICATED> >filter;
         if ((WHICH_REPLICATED == LEFT && !settings.isRightOuter()) || (WHICH_REPLICATED == RIGHT && !settings.isLeftOuter()))
@@ -620,7 +620,7 @@ public:
         {
             LOG4CXX_DEBUG(logger, "EJ merge rehashing first");
             ArenaPtr operatorArena = this->getArena();
-            ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
+            ArenaPtr hashArena(newArena(Options("PhysicalEquiJoin::globalJoinMerge()A").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
             JoinHashTable table(settings, hashArena, WHICH_FIRST == LEFT ? settings.getLeftTupleSize() : settings.getRightTupleSize());
             readIntoHashTable<WHICH_FIRST, READ_TUPLED> (first, table, settings);
             return arrayToTableJoin<WHICH_FIRST, READ_TUPLED, LEFT_OUTER || RIGHT_OUTER>( second, table, query, settings);
@@ -629,7 +629,7 @@ public:
         {
             LOG4CXX_DEBUG(logger, "EJ merge rehashing second");
             ArenaPtr operatorArena = this->getArena();
-            ArenaPtr hashArena(newArena(Options("").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
+            ArenaPtr hashArena(newArena(Options("PhysicalEquiJoin::globalJoinMerge()B").resetting(true).threading(false).pagesize(8 * 1024 * 1204).parent(operatorArena)));
             JoinHashTable table(settings, hashArena, WHICH_FIRST == LEFT ? settings.getRightTupleSize() : settings.getLeftTupleSize());
             readIntoHashTable<WHICH_SECOND, READ_TUPLED> (second, table, settings);
             return arrayToTableJoin<WHICH_SECOND, READ_TUPLED, LEFT_OUTER || RIGHT_OUTER>( first, table, query, settings);
